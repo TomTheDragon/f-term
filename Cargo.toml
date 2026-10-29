@@ -1,0 +1,67 @@
+[package]
+name = "f-term"
+version = "0.1.0"
+edition = "2021"
+# Rust 1.77 is the last release that officially targets Windows 7, so every
+# dependency has to stay compatible with it (see .cargo/config.toml).
+rust-version = "1.77"
+description = "A terminal client for F-Chat (F-List chat)"
+license = "MIT"
+readme = "README.md"
+keywords = ["f-chat", "f-list", "chat", "tui", "terminal"]
+categories = ["command-line-utilities"]
+
+[features]
+default = ["tls-ring", "images"]
+# TLS crypto backend. ring is fast but needs SSE2 on 32-bit x86.
+tls-ring = ["rustls/ring"]
+# Pure-Rust crypto, used for i586 / Windows 9x builds.
+tls-rustcrypto = ["dep:rustls-rustcrypto"]
+# Image decoding (avatars, eicons, profile pictures).
+images = ["dep:image"]
+# Run in an own window instead of the terminal (the *-gui builds). Windows
+# draws with GDI (src/ui/gui.rs, also on Windows 9x); Linux and macOS use winit
+# with a software renderer and an embedded font (src/ui/gui_winit.rs).
+gui = ["dep:winit", "dep:softbuffer", "dep:fontdue", "dep:arboard"]
+# Compact layout for consoles that can't be wider than 80 columns (used for
+# f-term-windows-9x.exe).
+narrow-console = []
+
+[dependencies]
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = { version = "0.28", default-features = false, features = ["events", "bracketed-paste"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+ureq = { version = "2", default-features = false, features = ["json"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "logging"] }
+rustls-rustcrypto = { version = "0.0.2-alpha", optional = true }
+webpki-roots = "0.26"
+base64 = "0.22"
+url = "2"
+unicode-width = "0.2"
+image = { version = "0.24", optional = true, default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# GUI on Linux and macOS (feature `gui`).
+[target.'cfg(not(windows))'.dependencies]
+winit = { version = "0.30", optional = true, default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen", "wayland-csd-adwaita-notitle"] }
+softbuffer = { version = "0.4", optional = true, default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
+fontdue = { version = "0.9", optional = true }
+arboard = { version = "3", optional = true, default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"
+
+[patch.crates-io]
+# getrandom with runtime RNG lookup so Windows 9x/XP builds can start (see vendor/README).
+getrandom = { path = "vendor/getrandom-0.2.17" }
+# crossterm_winapi without panics on the Windows 9x console (see vendor/README).
+crossterm_winapi = { path = "vendor/crossterm_winapi-0.9.1" }

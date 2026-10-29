@@ -1,0 +1,13 @@
+# Build output
+/target
+/dist
+
+# Local cross-compilation tools (scripts/setup-tools.sh)
+/.tools
+
+# Editor / OS files
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,14 @@
+; Imports from msvcrt.dll for the Win9x build. Only functions that every
+; msvcrt.dll (VC++ 4.2/6 era, as on Windows 95/98) exports.
+LIBRARY msvcrt.dll
+EXPORTS
+memcpy
+memset
+memmove
+memcmp
+strlen
+wcslen
+floor
+ceil
+fmod
+pow

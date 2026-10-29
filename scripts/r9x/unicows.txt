@@ -1,0 +1,53 @@
+# Functions routed through the unicows.lib replacement: "<dll> <function>".
+# Each is looked up at first call (unicows.dll on Win9x, the system DLL otherwise),
+# so the exe also starts on systems where the function is missing entirely.
+# build-all.sh warns about W functions the exe imports that are not listed here.
+kernel32 CopyFileW
+kernel32 CreateDirectoryW
+kernel32 CreateEventW
+kernel32 CreateFileW
+kernel32 CreateMutexW
+kernel32 CreateNamedPipeW
+kernel32 CreateProcessW
+kernel32 DeleteFileW
+kernel32 ExpandEnvironmentStringsW
+kernel32 FillConsoleOutputCharacterW
+kernel32 FindFirstFileW
+kernel32 FindNextFileW
+kernel32 FormatMessageW
+kernel32 FreeEnvironmentStringsW
+kernel32 GetCommandLineW
+kernel32 GetConsoleTitleW
+kernel32 GetCurrentDirectoryW
+kernel32 GetEnvironmentStringsW
+kernel32 GetEnvironmentVariableW
+kernel32 GetFileAttributesW
+kernel32 GetFullPathNameW
+kernel32 GetLongPathNameW
+kernel32 GetModuleFileNameW
+kernel32 GetModuleHandleW
+kernel32 GetShortPathNameW
+kernel32 GetSystemDirectoryW
+kernel32 GetTempFileNameW
+kernel32 GetTempPathW
+kernel32 GetWindowsDirectoryW
+kernel32 LoadLibraryW
+kernel32 lstrlenW
+kernel32 MoveFileExW
+kernel32 MoveFileW
+kernel32 OutputDebugStringW
+kernel32 PeekConsoleInputW
+kernel32 ReadConsoleInputW
+kernel32 ReadConsoleOutputW
+kernel32 ReadConsoleW
+kernel32 RemoveDirectoryW
+kernel32 SearchPathW
+kernel32 SetConsoleTitleW
+kernel32 SetCurrentDirectoryW
+kernel32 SetEnvironmentVariableW
+kernel32 SetFileAttributesW
+kernel32 WriteConsoleOutputCharacterW
+kernel32 WriteConsoleOutputW
+kernel32 WriteConsoleW
+user32 MessageBoxW
+user32 ToUnicodeEx
