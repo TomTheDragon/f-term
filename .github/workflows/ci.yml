@@ -19,6 +19,11 @@ jobs:
       # no system packages are needed to build it).
       - run: cargo clippy --all-targets --features gui,narrow-console -- -D warnings
       - run: cargo test --features gui,narrow-console
+      # The Linux packages' build (scripts/package-linux.sh), with the
+      # system font its tests draw with.
+      - run: sudo apt-get install -y fonts-dejavu-core
+      - run: cargo clippy --all-targets --features gui,prefer-terminal,system-fonts,system-certs -- -D warnings
+      - run: cargo test --features gui,prefer-terminal,system-fonts,system-certs
 
   # Make sure the code still builds with Rust 1.77 (needed for Windows 7 builds).
   msrv:

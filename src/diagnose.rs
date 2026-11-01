@@ -24,6 +24,8 @@ pub fn run() {
 
     // Certificates are only valid within a time range, so the clock must be right.
     println!("[info] system clock (UTC): {}", crate::timeutil::fmt_datetime(crate::timeutil::now()));
+    let source = if cfg!(feature = "system-certs") { "from the system" } else { "built in" };
+    println!("[info] trusted root certificates: {} ({source})", crate::tls::root_count());
 
     let mut buf = [0u8; 32];
     step("random numbers for TLS", crate::tls::fill_random(&mut buf));

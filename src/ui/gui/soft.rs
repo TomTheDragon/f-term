@@ -1,6 +1,6 @@
 //! Software renderer for the Linux/macOS window: draws the grid into a pixel
-//! buffer (0x00RRGGBB) with an embedded font (DejaVu Sans Mono, see
-//! assets/fonts/DejaVu-LICENSE.txt).
+//! buffer (0x00RRGGBB) with DejaVu Sans Mono: embedded (see
+//! assets/fonts/DejaVu-LICENSE.txt), or the system's with `system-fonts`.
 
 use std::collections::HashMap;
 
@@ -8,8 +8,61 @@ use fontdue::{Font, FontSettings};
 
 use super::{draw_shape, image_runs, GCell, ImageCache, PxRect, Screen, BOLD, CROSSED, DEFAULT_BG, UNDERLINE};
 
-static REGULAR: &[u8] = include_bytes!("../../../assets/fonts/DejaVuSansMono.ttf");
-static BOLD_FONT: &[u8] = include_bytes!("../../../assets/fonts/DejaVuSansMono-Bold.ttf");
+/// The regular and bold font files.
+#[cfg(not(feature = "system-fonts"))]
+fn font_files() -> [&'static [u8]; 2] {
+    static REGULAR: &[u8] = include_bytes!("../../../assets/fonts/DejaVuSansMono.ttf");
+    static BOLD: &[u8] = include_bytes!("../../../assets/fonts/DejaVuSansMono-Bold.ttf");
+    [REGULAR, BOLD]
+}
+
+/// The system's DejaVu Sans Mono (feature `system-fonts`, for distribution
+/// packages that depend on it), or another monospace font from fontconfig.
+#[cfg(feature = "system-fonts")]
+fn font_files() -> [&'static [u8]; 2] {
+    static FILES: std::sync::OnceLock<[Vec<u8>; 2]> = std::sync::OnceLock::new();
+    let [r, b] = FILES.get_or_init(|| {
+        let regular = system_font("DejaVuSansMono.ttf", "monospace:style=Regular").unwrap_or_else(|| {
+            panic!(
+                "No monospace font found. Install DejaVu Sans Mono \
+                 (fonts-dejavu-core on Debian/Ubuntu, dejavu-sans-mono-fonts on Fedora)."
+            )
+        });
+        let bold = system_font("DejaVuSansMono-Bold.ttf", "monospace:style=Bold").unwrap_or_else(|| regular.clone());
+        [regular, bold]
+    });
+    [r.as_slice(), b.as_slice()]
+}
+
+/// Find a font file by name in the usual font folders, else ask fontconfig.
+#[cfg(feature = "system-fonts")]
+fn system_font(file: &str, fallback: &str) -> Option<Vec<u8>> {
+    fn find(dir: &std::path::Path, file: &str, depth: u32) -> Option<std::path::PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        let mut subdirs = Vec::new();
+        for e in entries.flatten() {
+            let path = e.path();
+            if e.file_name().to_str() == Some(file) {
+                return Some(path);
+            }
+            if depth > 0 && path.is_dir() {
+                subdirs.push(path);
+            }
+        }
+        subdirs.iter().find_map(|d| find(d, file, depth - 1))
+    }
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let dirs = ["/usr/share/fonts".into(), "/usr/local/share/fonts".into()]
+        .into_iter()
+        .chain(home.iter().flat_map(|h| [h.join(".local/share/fonts"), h.join(".fonts")]));
+    let path = dirs.into_iter().find_map(|d: std::path::PathBuf| find(&d, file, 4)).or_else(|| {
+        let out = std::process::Command::new("fc-match").args(["-f", "%{file}", fallback]).output().ok()?;
+        let p = std::path::PathBuf::from(String::from_utf8(out.stdout).ok()?);
+        let ext = p.extension()?.to_str()?.to_ascii_lowercase();
+        (ext == "ttf" || ext == "otf").then_some(p)
+    })?;
+    std::fs::read(path).ok()
+}
 
 struct Glyph {
     /// Offset from the cell's top-left corner.
@@ -70,9 +123,9 @@ impl Canvas<'_> {
 impl Renderer {
     /// A renderer for a font height of `px` pixels.
     pub fn new(px: f32) -> Renderer {
-        let load =
-            |data: &'static [u8]| Font::from_bytes(data, FontSettings { scale: px, ..FontSettings::default() }).expect("embedded font");
-        let fonts = [load(REGULAR), load(BOLD_FONT)];
+        let load = |data: &'static [u8]| Font::from_bytes(data, FontSettings { scale: px, ..FontSettings::default() }).expect("font");
+        let [regular, bold] = font_files();
+        let fonts = [load(regular), load(bold)];
         let (ascent, descent) = match fonts[0].horizontal_line_metrics(px) {
             Some(m) => (m.ascent.ceil() as i32, (-m.descent).ceil() as i32),
             None => ((px * 0.8) as i32, (px * 0.25) as i32),

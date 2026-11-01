@@ -23,6 +23,18 @@ mod ui;
 
 use std::path::PathBuf;
 
+/// The --window / --terminal lines of the help, for builds that have them.
+fn window_options() -> &'static str {
+    if cfg!(all(feature = "gui", not(windows))) {
+        "      --window             Open a window (default when started outside a terminal)\n\
+         \x20     --terminal           Run in the terminal\n"
+    } else if cfg!(feature = "gui") {
+        "      --window             Open a window (the default)\n"
+    } else {
+        "      --terminal           Run in the terminal (the default)\n"
+    }
+}
+
 fn usage() -> String {
     format!(
         "F-Term {} — F-Chat client for the terminal
@@ -38,13 +50,14 @@ Options:
       --diagnose           Check the connection to F-List step by step and exit
       --forget <account>   Remove a saved login and exit
       --paths              Print where settings and logs are stored and exit
-  -h, --help               Show this help
+{}  -h, --help               Show this help
   -V, --version            Show the version
 
 Settings are stored in settings.toml; edit them in the app with F6 or /set.
 Portable mode: put a file named \"portable\" next to the executable.
 TLS backend: {}",
         env!("CARGO_PKG_VERSION"),
+        window_options(),
         tls::backend_name()
     )
 }
@@ -78,6 +91,8 @@ fn main() {
             "-a" | "--account" => opts.account = Some(value("--account")),
             "-c" | "--character" => opts.character = Some(value("--character")),
             "--no-autologin" => opts.no_autologin = true,
+            "--window" if cfg!(feature = "gui") => ui::force_window(Some(true)),
+            "--terminal" if cfg!(not(all(windows, feature = "gui"))) => ui::force_window(Some(false)),
             "--config-dir" => config_dir = Some(PathBuf::from(value("--config-dir"))),
             "--debug" => debug = true,
             "--diagnose" => {

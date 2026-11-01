@@ -6,6 +6,7 @@
 #   - rustup targets for every platform
 #   - Rust 1.77.2 (last release that supports Windows 7)
 #   - llvm-mingw (msvcrt variant)             -> Windows linker without the UCRT dependency
+#   - cargo-deb, cargo-generate-rpm, appimagetool -> Linux packages (scripts/package-linux.sh)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
@@ -59,6 +60,22 @@ rustup target add x86_64-unknown-linux-musl i586-unknown-linux-musl aarch64-appl
     x86_64-unknown-linux-gnu i586-unknown-linux-gnu
 rustup toolchain install 1.77.2 --profile minimal
 rustup target add --toolchain 1.77.2 i686-pc-windows-gnu x86_64-pc-windows-gnu
+
+for tool in cargo-deb cargo-generate-rpm; do
+    if [ ! -x "$TOOLS/bin/$tool" ]; then
+        echo ">> Installing $tool"
+        cargo install --locked --root "$TOOLS" "$tool"
+    fi
+done
+if [ ! -x "$TOOLS/appimage/appimagetool-x86_64.AppImage" ] || [ ! -f "$TOOLS/appimage/runtime-x86_64" ]; then
+    echo ">> Downloading appimagetool"
+    mkdir -p "$TOOLS/appimage"
+    curl -fsSL -o "$TOOLS/appimage/appimagetool-x86_64.AppImage" \
+        https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+    curl -fsSL -o "$TOOLS/appimage/runtime-x86_64" \
+        https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+    chmod +x "$TOOLS/appimage/appimagetool-x86_64.AppImage"
+fi
 
 if rustup toolchain list | grep -q '^rust9x'; then
     echo ">> rust9x toolchain found (Windows 9x builds possible, see README)"

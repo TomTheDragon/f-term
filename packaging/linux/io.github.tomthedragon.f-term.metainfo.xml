@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.tomthedragon.f-term</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>F-Term</name>
+  <developer id="io.github.tomthedragon">
+    <name>TomTheDragon</name>
+  </developer>
+  <summary>Chat client for F-Chat, the F-List chat</summary>
+  <description>
+    <p>
+      F-Term is a client for F-Chat that runs in a terminal or in its own window.
+      It covers the features of the official client: channels and private rooms,
+      private messages, ads, dice, statuses, profiles, friends and bookmarks,
+      chat logs, character search and moderator commands.
+    </p>
+    <p>
+      It also shows F-List notes and site messages, plays animated eicons and
+      shows how well your kinks match a profile.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.tomthedragon.f-term.desktop</launchable>
+  <url type="homepage">https://github.com/TomTheDragon/f-term</url>
+  <url type="bugtracker">https://github.com/TomTheDragon/f-term/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/TomTheDragon/f-term/v1.0.0/docs/screenshots/chat.png</image>
+      <caption>A channel with inline images and the member list</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+    <content_attribute id="sex-themes">intense</content_attribute>
+  </content_rating>
+  <provides>
+    <binary>f-term</binary>
+  </provides>
+  <releases>
+    <release version="1.0.0" date="2026-11-01"/>
+  </releases>
+</component>

@@ -5,7 +5,7 @@ edition = "2021"
 # Rust 1.77 is the last release that officially targets Windows 7, so every
 # dependency has to stay compatible with it (see .cargo/config.toml).
 rust-version = "1.77"
-description = "A terminal client for F-Chat (F-List chat)"
+description = "Terminal and desktop client for F-Chat (the F-List chat)"
 license = "MIT"
 readme = "README.md"
 keywords = ["f-chat", "f-list", "chat", "tui", "terminal"]
@@ -26,6 +26,17 @@ gui = ["dep:winit", "dep:softbuffer", "dep:fontdue", "dep:arboard"]
 # Compact layout for consoles that can't be wider than 80 columns (used for
 # f-term-windows-9x.exe).
 narrow-console = []
+# For distribution packages (scripts/package-linux.sh):
+# - prefer-terminal: with `gui`, run in the terminal when started from one; the
+#   window opens when started without one (e.g. from the desktop menu) or
+#   with --window.
+# - system-fonts: the window uses the system's DejaVu Sans Mono instead of
+#   the embedded copy.
+# - system-certs: trust the system's CA certificates instead of the built-in
+#   list.
+prefer-terminal = []
+system-fonts = []
+system-certs = []
 
 [dependencies]
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
@@ -65,3 +76,58 @@ panic = "unwind"
 getrandom = { path = "vendor/getrandom-0.2.17" }
 # crossterm_winapi without panics on the Windows 9x console (see vendor/README).
 crossterm_winapi = { path = "vendor/crossterm_winapi-0.9.1" }
+
+# ---- Linux packages (scripts/package-linux.sh) ----
+# One binary for terminal and window, using the system's fonts and CA
+# certificates. The X11/Wayland libraries are only needed for the window.
+
+[package.metadata.deb]
+name = "f-term"
+maintainer = "TomTheDragon <7361323+TomTheDragon@users.noreply.github.com>"
+copyright = "2026 TomTheDragon"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+F-Term is a client for F-Chat (the F-List chat) that runs in a terminal or in \
+its own window: channels, private messages, ads, profiles, notes, site \
+messages, chat logs and more. Run `f-term` in a terminal, or start it from \
+the application menu for a window."""
+section = "net"
+priority = "optional"
+depends = "libc6 (>= 2.17), fonts-dejavu-core, ca-certificates"
+recommends = "libx11-6, libx11-xcb1, libxcursor1, libxrandr2, libxi6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0"
+assets = [
+    ["target/linux-pkg/system/f-term", "usr/bin/", "755"],
+    ["packaging/linux/io.github.tomthedragon.f-term.desktop", "usr/share/applications/", "644"],
+    ["packaging/linux/io.github.tomthedragon.f-term.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["assets/f-term.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["README.md", "usr/share/doc/f-term/", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "f-term"
+summary = "Chat client for F-Chat, the F-List chat"
+license = "MIT"
+url = "https://github.com/TomTheDragon/f-term"
+assets = [
+    { source = "target/linux-pkg/system/f-term", dest = "/usr/bin/f-term", mode = "755" },
+    { source = "packaging/linux/io.github.tomthedragon.f-term.desktop", dest = "/usr/share/applications/io.github.tomthedragon.f-term.desktop", mode = "644" },
+    { source = "packaging/linux/io.github.tomthedragon.f-term.metainfo.xml", dest = "/usr/share/metainfo/io.github.tomthedragon.f-term.metainfo.xml", mode = "644" },
+    { source = "assets/f-term.svg", dest = "/usr/share/icons/hicolor/scalable/apps/f-term.svg", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/f-term/README.md", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/licenses/f-term/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+dejavu-sans-mono-fonts = "*"
+ca-certificates = "*"
+
+[package.metadata.generate-rpm.recommends]
+libX11 = "*"
+libX11-xcb = "*"
+libXcursor = "*"
+libXrandr = "*"
+libXi = "*"
+libxkbcommon = "*"
+libxkbcommon-x11 = "*"
+libwayland-client = "*"
+libwayland-cursor = "*"

@@ -255,7 +255,7 @@ impl App {
 
     pub fn run(&mut self) -> std::io::Result<()> {
         #[cfg(feature = "gui")]
-        if gui_display_available() {
+        if use_window() {
             return self.run_gui();
         }
         self.run_console()
@@ -1382,6 +1382,28 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) if inside(self.hit.input) => self.focus = Focus::Input,
             _ => {}
         }
+    }
+}
+
+/// Window or terminal, from --window / --terminal (`None`: decide by itself).
+static FORCE_WINDOW: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+
+/// Called with --window (`Some(true)`) or --terminal (`Some(false)`).
+pub fn force_window(window: Option<bool>) {
+    let _ = FORCE_WINDOW.set(window);
+}
+
+/// Open a window (GUI builds) or run in the terminal.
+#[cfg(feature = "gui")]
+fn use_window() -> bool {
+    match FORCE_WINDOW.get().copied().flatten() {
+        Some(w) => w,
+        // Distribution packages: started from a terminal, stay in it.
+        None if cfg!(feature = "prefer-terminal") => {
+            use std::io::IsTerminal;
+            gui_display_available() && !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal())
+        }
+        None => gui_display_available(),
     }
 }
 

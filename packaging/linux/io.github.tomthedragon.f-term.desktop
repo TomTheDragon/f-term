@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=F-Term
+GenericName=F-Chat Client
+Comment=Chat client for F-Chat, the F-List chat
+Exec=f-term --window
+Icon=f-term
+Terminal=false
+Categories=Network;Chat;InstantMessaging;
+Keywords=F-Chat;F-List;chat;roleplay;
+StartupWMClass=io.github.tomthedragon.f-term

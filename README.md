@@ -157,12 +157,32 @@ made again with `cargo test --features gui -- --ignored screenshots`.
   input line or the open dialog. The GUI versions select with the mouse and copy
   to the clipboard themselves (see [GUI versions](#gui-versions)).
 
+## Installation
+
+Download F-Term from the [releases page](https://github.com/TomTheDragon/f-term/releases).
+Most downloads are a single program file with nothing to install. For Linux
+there are also packages and an AppImage:
+
+| Linux | Download | Install |
+| --- | --- | --- |
+| Ubuntu, Debian | `f-term_<version>-1_amd64.deb` | `sudo apt install ./f-term_<version>-1_amd64.deb` |
+| Fedora | `f-term-<version>-1.x86_64.rpm` | `sudo dnf install ./f-term-<version>-1.x86_64.rpm` |
+| any distribution | `F-Term-<version>-x86_64.AppImage` | `chmod +x F-Term-*.AppImage`, then run it |
+
+The packages and the AppImage contain one program for both uses: run `f-term`
+in a terminal to use it there, or start **F-Term** from the application menu
+(or double-click the AppImage) for a window. The `.deb` and `.rpm` use the
+system's DejaVu Sans Mono font and CA certificates (installed as
+dependencies) instead of built-in copies, so they are smaller.
+
 ## Usage
 
 ```
 f-term [--account NAME] [--character NAME] [--no-autologin] [--config-dir DIR] [--debug]
 f-term --paths            # show where settings and logs are stored
 f-term --forget NAME      # remove a saved login
+f-term --window           # GUI builds: open a window
+f-term --terminal         # Linux/macOS GUI builds: run in the terminal
 ```
 
 Press **F1** in the app for all keys and commands. The most important ones:
@@ -224,7 +244,7 @@ under messages are on by default (`gui_inline_images`).
 - Linux (X11 and Wayland) and macOS use [winit] with a software renderer and an
   embedded font, DejaVu Sans Mono (`gui/winit.rs`, `gui/soft.rs`,
   `assets/fonts`). On Linux without a display (e.g. over SSH) the GUI build
-  runs in the terminal instead.
+  runs in the terminal instead, and `--terminal` does so anyway.
 
 Usage:
 
@@ -288,6 +308,32 @@ Notes:
 - **getrandom** is vendored with a small patch (`vendor/getrandom-0.2.17`). It
   looks up the Windows RNG functions at runtime, because the upstream crate
   imports `bcrypt.dll` and would not start on Windows 9x/XP.
+
+### Linux packages
+
+```
+scripts/setup-tools.sh      # once; also installs cargo-deb, cargo-generate-rpm and appimagetool
+scripts/package-linux.sh    # -> dist/*.deb, dist/*.rpm, dist/*.AppImage (x86-64)
+```
+
+All three contain one binary built with `gui` and `prefer-terminal`: it runs
+in the terminal when started from one, and opens a window when started from
+the desktop or with `--window`. The binaries are built for
+`x86_64-unknown-linux-gnu.2.17` (glibc 2.17 or newer, X11/Wayland loaded at
+run time).
+
+- The `.deb` and `.rpm` also use `system-fonts` and `system-certs`: the window
+  uses the system's DejaVu Sans Mono and TLS trusts the system's CA bundle
+  (`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/ca-trust/...`, or
+  `SSL_CERT_FILE`), instead of built-in copies. The packages depend on
+  `fonts-dejavu-core`/`dejavu-sans-mono-fonts` and `ca-certificates`, and
+  recommend the X11/Wayland libraries (only needed for the window).
+  Package details are in `[package.metadata.deb]` and
+  `[package.metadata.generate-rpm]` in `Cargo.toml`.
+- The AppImage keeps the built-in font and certificates, so it runs anywhere.
+- Desktop file, AppStream metadata and icon: `packaging/linux/` and
+  `assets/f-term.svg`. The app ID is `io.github.tomthedragon.f-term`; the
+  window uses it too, so the desktop shows the right name and icon.
 
 ### Windows 9x (rust9x)
 
