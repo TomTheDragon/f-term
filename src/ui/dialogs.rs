@@ -90,9 +90,27 @@ pub struct LogsState {
     pub day: String,
     pub lines: Vec<String>,
     pub scroll: usize,
+    /// Results of a search over all logs (stage 3).
+    pub hits: Vec<logs::Hit>,
+    pub hit_sel: usize,
+    pub query: String,
+    /// The day view was opened from the search results.
+    pub from_search: bool,
 }
 
+pub const LOG_SEARCH_LIMIT: usize = 500;
+
 impl LogsState {
+    /// Search all logs and show the results.
+    pub fn search(&mut self, me: &str, query: &str) {
+        self.query = query.trim().to_string();
+        self.hits = logs::search(me, &self.query, LOG_SEARCH_LIMIT);
+        self.hit_sel = 0;
+        self.stage = 3;
+        self.from_search = false;
+        self.filter.clear();
+    }
+
     pub fn new(me: &str) -> LogsState {
         LogsState { convs: logs::conversations(me), ..Default::default() }
     }
@@ -197,6 +215,10 @@ pub enum Dialog {
     Confirm { text: String, action: Action },
     Image { title: String, url: String },
     Text { title: String, lines: Vec<Line<'static>>, scroll: usize },
+    Notes(Box<super::site::NotesState>),
+    Messages(Box<super::site::MessagesState>),
+    Personals(Box<super::site::PersonalsState>),
+    Eicons(Box<super::eicons::EiconPicker>),
 }
 
 impl Dialog {
@@ -232,6 +254,8 @@ impl Dialog {
             Dialog::Status(st) => st.msg.insert_str(s),
             Dialog::Logs(l) => l.filter.insert_str(s.trim()),
             Dialog::Search(se) => se.filter.insert_str(s.trim()),
+            Dialog::Personals(p) => p.filter.insert_str(s.trim()),
+            Dialog::Eicons(p) => p.filter.insert_str(s.trim()),
             _ => {}
         }
     }
@@ -260,9 +284,37 @@ impl Dialog {
                     l.sel = row;
                 } else if l.stage == 1 {
                     l.day_sel = row;
+                } else if l.stage == 3 {
+                    l.hit_sel = row.min(l.hits.len().saturating_sub(1));
                 } else {
                     return false;
                 }
+                true
+            }
+            Dialog::Notes(n) if n.view.is_none() => {
+                if n.focus_notes {
+                    n.sel = row;
+                } else {
+                    n.list_sel = row.min(n.entries().len() - 1);
+                    return false;
+                }
+                true
+            }
+            Dialog::Messages(m) => {
+                if m.focus_items {
+                    m.sel = row;
+                } else {
+                    m.cat_sel = row;
+                    return false;
+                }
+                true
+            }
+            Dialog::Personals(p) => {
+                p.sel = row;
+                true
+            }
+            Dialog::Eicons(p) => {
+                p.sel = row.min(p.results.len().saturating_sub(1));
                 true
             }
             Dialog::Search(s) => {
@@ -303,6 +355,9 @@ fn help_lines(is_op: bool) -> Vec<Line<'static>> {
         k("Alt+A", "Jump to next tab with unread messages"),
         k("Alt+W", "Close tab (leave channel)"),
         k("Alt+J / Alt+P", "Join a channel / open a private chat by name"),
+        k("Ctrl+F", "Search this tab (Ctrl+F older, Ctrl+G newer, Esc ends)"),
+        k("Alt+N / Alt+M", "F-List notes / site messages"),
+        k("Alt+E", "Eicon picker (also Tab after [eicon])"),
         k("Ctrl+O", "Focus member list / tab list / input"),
         k("Ctrl+L", "Redraw screen"),
         k("Ctrl+C", "Clear input (quit when empty)"),
@@ -598,11 +653,18 @@ impl App {
                 let title = match l.stage {
                     0 => "Logs".to_string(),
                     1 => format!("Logs: {}", l.conv_title),
+                    3 => format!(
+                        "Log search: {} result{}{}",
+                        l.hits.len(),
+                        if l.hits.len() == 1 { "" } else { "s" },
+                        if l.hits.len() >= LOG_SEARCH_LIMIT { " (limit reached)" } else { "" }
+                    ),
                     _ => format!("Logs: {} — {}", l.conv_title, l.day),
                 };
                 let inner = widgets::popup(buf, big, &title, ascii);
-                buf.set_string(inner.x, inner.y, if l.stage == 2 { "Search: " } else { "Filter: " }, Style::default().fg(Color::Gray));
-                buf.set_string(inner.x + 8, inner.y, l.filter.text(), Style::default().fg(Color::Yellow));
+                buf.set_string(inner.x, inner.y, if l.stage >= 2 { "Search: " } else { "Filter: " }, Style::default().fg(Color::Gray));
+                let shown = if l.stage == 3 { l.query.as_str() } else { l.filter.text() };
+                buf.set_string(inner.x + 8, inner.y, shown, Style::default().fg(Color::Yellow));
                 let body = Rect::new(inner.x, inner.y + 2, inner.width, inner.height.saturating_sub(3));
                 match l.stage {
                     0 => {
@@ -617,6 +679,29 @@ impl App {
                         let items: Vec<Line<'static>> = l.days.iter().map(|d| Line::from(d.clone())).collect();
                         list_offset = widgets::list(buf, body, &items, l.day_sel, top);
                         list_area = body;
+                    }
+                    3 => {
+                        let items: Vec<Line<'static>> = l
+                            .hits
+                            .iter()
+                            .map(|h| {
+                                let text = match logs::parse_line(&h.line) {
+                                    Some(m) if !m.sender.is_empty() => format!("{}: {}", m.sender, bbcode::strip(&m.text)),
+                                    Some(m) => bbcode::strip(&m.text),
+                                    None => h.line.clone(),
+                                };
+                                Line::from(vec![
+                                    Span::styled(format!("{} ", h.day), Style::default().fg(Color::DarkGray)),
+                                    Span::styled(format!("{}  ", h.title), Style::default().fg(Color::LightCyan)),
+                                    Span::raw(text.replace('\n', " ")),
+                                ])
+                            })
+                            .collect();
+                        list_offset = widgets::list(buf, body, &items, l.hit_sel, top);
+                        list_area = body;
+                        if items.is_empty() {
+                            buf.set_string(body.x + 1, body.y, "Nothing found.", Style::default().fg(Color::DarkGray));
+                        }
                     }
                     _ => {
                         let ns = |n: &str| self.name_style(n);
@@ -646,8 +731,9 @@ impl App {
                     }
                 }
                 let hints: &[(&str, &str)] = match l.stage {
-                    0 => &[("Enter", "open"), ("type", "filter"), ("Esc", "close")],
+                    0 => &[("Enter", "open"), ("type", "filter"), ("Ctrl+F", "search all logs"), ("Esc", "close")],
                     1 => &[("Enter", "read"), ("Esc", "back")],
+                    3 => &[("Enter", "open day"), ("Esc", "close")],
                     _ => &[("↑↓ PgUp PgDn", "scroll"), ("type", "search"), ("[ ]", "prev/next day"), ("Esc", "back")],
                 };
                 widgets::draw_hints(buf, inner.x, inner.bottom() - 1, hints, inner.width);
@@ -729,6 +815,18 @@ impl App {
                     ],
                     inner.width,
                 );
+            }
+            Dialog::Eicons(_) => {
+                let (d, l, o) = self.draw_eicon_picker(buf, big, idx);
+                dialog_area = d;
+                list_area = l;
+                list_offset = o;
+            }
+            Dialog::Notes(_) | Dialog::Messages(_) | Dialog::Personals(_) => {
+                let (d, l, o) = self.draw_site_dialog(buf, big, idx, top);
+                dialog_area = d;
+                list_area = l;
+                list_offset = o;
             }
             Dialog::Profile(_) => unreachable!(),
         }
@@ -895,6 +993,10 @@ impl App {
             Dialog::Status(_) => return self.status_key(key),
             Dialog::Logs(_) => return self.logs_key(key),
             Dialog::Search(_) => return self.search_key(key),
+            Dialog::Notes(_) => return self.notes_key(key),
+            Dialog::Messages(_) => return self.messages_key(key),
+            Dialog::Personals(_) => return self.personals_key(key),
+            Dialog::Eicons(_) => return self.eicon_picker_key(key),
             Dialog::Profile(_) => unreachable!(),
         }
         if close {
@@ -1109,6 +1211,34 @@ impl App {
             (0, KeyCode::Esc) => {
                 self.dialogs.pop();
             }
+            (0, KeyCode::Char('f')) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let q = l.filter.text().to_string();
+                if !q.trim().is_empty() {
+                    l.search(&me, &q);
+                }
+            }
+            (3, KeyCode::Esc) => {
+                self.dialogs.pop();
+            }
+            (3, KeyCode::Up) => l.hit_sel = l.hit_sel.saturating_sub(1),
+            (3, KeyCode::Down) => l.hit_sel = (l.hit_sel + 1).min(l.hits.len().saturating_sub(1)),
+            (3, KeyCode::PageUp) => l.hit_sel = l.hit_sel.saturating_sub(15),
+            (3, KeyCode::PageDown) => l.hit_sel = (l.hit_sel + 15).min(l.hits.len().saturating_sub(1)),
+            (3, KeyCode::Enter) => {
+                if let Some(h) = l.hits.get(l.hit_sel).cloned() {
+                    if let Some(i) = l.convs.iter().position(|c| c.0 == h.conv_key) {
+                        l.open_conv(&me, i);
+                        l.day_sel = l.days.iter().position(|d| *d == h.day).unwrap_or(0);
+                        l.lines = logs::read_day(&me, &l.conv_key, &h.day);
+                        l.day = h.day;
+                        l.stage = 2;
+                        l.scroll = 0;
+                        l.from_search = true;
+                        let q = l.query.clone();
+                        l.filter.insert_str(&q);
+                    }
+                }
+            }
             (0, KeyCode::Up) => l.sel = l.sel.saturating_sub(1),
             (0, KeyCode::Down) => l.sel = (l.sel + 1).min(l.filtered_convs().len().saturating_sub(1)),
             (0, KeyCode::PageUp) => l.sel = l.sel.saturating_sub(15),
@@ -1137,7 +1267,11 @@ impl App {
                 }
             }
             (2, KeyCode::Esc) => {
-                if l.filter.is_empty() {
+                if l.from_search && (l.filter.is_empty() || l.filter.text() == l.query) {
+                    l.stage = 3;
+                    l.from_search = false;
+                    l.filter.clear();
+                } else if l.filter.is_empty() {
                     l.stage = 1;
                 } else {
                     l.filter.clear();
@@ -1160,7 +1294,7 @@ impl App {
                     l.scroll = if older { usize::MAX / 2 } else { 0 };
                 }
             }
-            (stage, _) if stage != 1 => {
+            (stage, _) if stage == 0 || stage == 2 => {
                 if let EditResult::Changed = l.filter.handle(key) {
                     l.sel = 0;
                     if stage == 2 {

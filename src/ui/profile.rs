@@ -16,7 +16,7 @@ use crate::config::ImageMode;
 use crate::protocol::{vi, vs};
 use crate::timeutil;
 
-pub const TABS: [&str; 6] = ["Overview", "Description", "Kinks", "Images", "Friends", "Guestbook"];
+pub const TABS: [&str; 7] = ["Overview", "Description", "Kinks", "Images", "Friends", "Guestbook", "Groups"];
 
 pub struct ProfileState {
     pub name: String,
@@ -28,6 +28,7 @@ pub struct ProfileState {
     pub guestbook: Option<(u32, Result<Value, String>)>,
     pub gb_page: u32,
     pub friends: Option<Result<Vec<String>, String>>,
+    pub groups: Option<Result<Vec<String>, String>>,
 }
 
 impl ProfileState {
@@ -42,6 +43,7 @@ impl ProfileState {
             guestbook: None,
             gb_page: 0,
             friends: None,
+            groups: None,
         }
     }
 
@@ -81,7 +83,55 @@ impl ProfileState {
     }
 }
 
-fn overview_lines(v: &Value, map: Option<&Mapping>, status: Option<(String, String)>) -> Vec<Line<'static>> {
+/// Your kinks: kink id -> choice ("fave", "yes", "maybe", "no").
+pub type MyKinks = std::collections::HashMap<String, String>;
+
+pub fn my_kinks_from(v: &Value) -> MyKinks {
+    v.get("kinks")
+        .and_then(Value::as_object)
+        .map(|m| m.iter().filter_map(|(k, c)| c.as_str().map(|c| (k.clone(), c.to_string()))).collect())
+        .unwrap_or_default()
+}
+
+fn likes(choice: &str) -> bool {
+    matches!(choice, "fave" | "yes")
+}
+
+/// How a kink of theirs compares with yours: Some(true) = both like it,
+/// Some(false) = one of you likes it and the other said no.
+fn kink_fit(theirs: &str, mine: Option<&str>) -> Option<bool> {
+    let mine = mine?;
+    if likes(theirs) && likes(mine) {
+        Some(true)
+    } else if (likes(theirs) && mine == "no") || (theirs == "no" && likes(mine)) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// (shared likes, shared favourites, conflicts) between a profile and yours.
+pub fn kink_match(v: &Value, mine: &MyKinks) -> (usize, usize, usize) {
+    let (mut shared, mut faves, mut conflicts) = (0, 0, 0);
+    if let Some(kinks) = v.get("kinks").and_then(Value::as_object) {
+        for (id, c) in kinks {
+            let theirs = c.as_str().unwrap_or("");
+            match kink_fit(theirs, mine.get(id).map(String::as_str)) {
+                Some(true) => {
+                    shared += 1;
+                    if theirs == "fave" && mine.get(id).map(|m| m == "fave").unwrap_or(false) {
+                        faves += 1;
+                    }
+                }
+                Some(false) => conflicts += 1,
+                None => {}
+            }
+        }
+    }
+    (shared, faves, conflicts)
+}
+
+fn overview_lines(v: &Value, map: Option<&Mapping>, status: Option<(String, String)>, mine: Option<&MyKinks>) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     let key = Style::default().fg(Color::Gray);
     let head = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
@@ -118,6 +168,19 @@ fn overview_lines(v: &Value, map: Option<&Mapping>, status: Option<(String, Stri
         out.push(Line::from(vec![Span::styled("Updated: ", key), Span::raw(timeutil::fmt_date(updated))]));
     }
     out.push(Line::from(vec![Span::styled("Views: ", key), Span::raw(vi(v, "views").to_string())]));
+    if let Some(mine) = mine.filter(|m| !m.is_empty()) {
+        let (shared, faves, conflicts) = kink_match(v, mine);
+        out.push(Line::from(vec![
+            Span::styled("Kink match: ", key),
+            Span::styled(format!("{shared} liked by both"), Style::default().fg(Color::LightGreen)),
+            Span::raw(format!(" ({faves} favorite{}), ", if faves == 1 { "" } else { "s" })),
+            Span::styled(
+                format!("{conflicts} conflict{}", if conflicts == 1 { "" } else { "s" }),
+                Style::default().fg(if conflicts > 0 { Color::LightRed } else { Color::Gray }),
+            ),
+            Span::styled(" (see Kinks)", Style::default().fg(Color::DarkGray)),
+        ]));
+    }
     if let Some(m) = v.get("memo") {
         let memo = vs(m, "memo");
         if !memo.is_empty() {
@@ -175,17 +238,18 @@ fn overview_lines(v: &Value, map: Option<&Mapping>, status: Option<(String, Stri
     out
 }
 
-fn kink_lines(v: &Value, map: Option<&Mapping>, width: u16) -> Vec<Line<'static>> {
+fn kink_lines(v: &Value, map: Option<&Mapping>, width: u16, mine: Option<&MyKinks>, ascii: bool) -> Vec<Line<'static>> {
     let choices = ["fave", "yes", "maybe", "no"];
     let titles = ["Favorites", "Yes", "Maybe", "No"];
     let colors = [Color::LightGreen, Color::Green, Color::Yellow, Color::LightRed];
-    let mut cols: Vec<Vec<(String, bool)>> = vec![Vec::new(); 4];
+    let mut cols: Vec<Vec<(String, bool, Option<bool>)>> = vec![Vec::new(); 4];
+    let fit = |id: &str, ci: usize| mine.and_then(|m| kink_fit(choices[ci], m.get(id).map(String::as_str)));
     let mut sub_kinks = std::collections::HashSet::new();
     if let Some(customs) = v.get("custom_kinks").and_then(Value::as_object) {
         for (_, c) in customs {
             let choice = vs(c, "choice");
             let Some(ci) = choices.iter().position(|x| *x == choice) else { continue };
-            cols[ci].push((format!("*{}", vs(c, "name")), true));
+            cols[ci].push((format!("*{}", vs(c, "name")), true, None));
             if let Some(children) = c.get("children").and_then(Value::as_array) {
                 for ch in children {
                     let id = match ch {
@@ -193,14 +257,15 @@ fn kink_lines(v: &Value, map: Option<&Mapping>, width: u16) -> Vec<Line<'static>
                         other => other.to_string(),
                     };
                     sub_kinks.insert(id.clone());
+                    let f = fit(&id, ci);
                     let name = map.and_then(|m| m.kinks.get(&id)).map(|k| k.0.clone()).unwrap_or(id);
-                    cols[ci].push((format!("  · {name}"), false));
+                    cols[ci].push((format!("  · {name}"), false, f));
                 }
             }
         }
     }
     if let Some(kinks) = v.get("kinks").and_then(Value::as_object) {
-        let mut std_kinks: Vec<(usize, String)> = Vec::new();
+        let mut std_kinks: Vec<(usize, String, Option<bool>)> = Vec::new();
         for (id, choice) in kinks {
             if sub_kinks.contains(id) {
                 continue;
@@ -208,14 +273,30 @@ fn kink_lines(v: &Value, map: Option<&Mapping>, width: u16) -> Vec<Line<'static>
             let choice = choice.as_str().unwrap_or("");
             let Some(ci) = choices.iter().position(|x| *x == choice) else { continue };
             let name = map.and_then(|m| m.kinks.get(id)).map(|k| k.0.clone()).unwrap_or_else(|| format!("#{id}"));
-            std_kinks.push((ci, name));
+            std_kinks.push((ci, name, fit(id, ci)));
         }
         std_kinks.sort_by_key(|k| k.1.to_lowercase());
-        for (ci, name) in std_kinks {
-            cols[ci].push((name, false));
+        for (ci, name, f) in std_kinks {
+            cols[ci].push((name, false, f));
         }
     }
+    let (yes_mark, no_mark) = if ascii { ("+", "x") } else { ("✓", "✗") };
+    let mark = |f: Option<bool>| match f {
+        Some(true) => Span::styled(format!("{yes_mark} "), Style::default().fg(Color::LightGreen)),
+        Some(false) => Span::styled(format!("{no_mark} "), Style::default().fg(Color::LightRed)),
+        None => Span::raw(if mine.is_some() { "  " } else { "" }),
+    };
     let mut out = Vec::new();
+    if mine.is_some() {
+        out.push(Line::from(vec![
+            Span::styled(format!("{yes_mark} "), Style::default().fg(Color::LightGreen)),
+            Span::raw("you like it too   "),
+            Span::styled(format!("{no_mark} "), Style::default().fg(Color::LightRed)),
+            Span::raw("one of you said no"),
+        ]));
+        out.push(Line::default());
+    }
+    let mw = if mine.is_some() { 2 } else { 0 };
     if width >= 100 {
         // Four columns side by side.
         let cw = (width as usize / 4).saturating_sub(1);
@@ -234,10 +315,11 @@ fn kink_lines(v: &Value, map: Option<&Mapping>, width: u16) -> Vec<Line<'static>
         ));
         for r in 0..rows {
             let spans: Vec<Span<'static>> = (0..4)
-                .map(|c| {
-                    let (txt, custom) = cols[c].get(r).cloned().unwrap_or_default();
+                .flat_map(|c| {
+                    let (txt, custom, f) = cols[c].get(r).cloned().unwrap_or_default();
                     let st = if custom { Style::default().add_modifier(Modifier::BOLD) } else { Style::default() };
-                    Span::styled(format!("{:<cw$} ", trunc(&txt, cw)), st)
+                    let w = cw.saturating_sub(mw);
+                    [mark(f), Span::styled(format!("{:<w$} ", trunc(&txt, w)), st)]
                 })
                 .collect();
             out.push(Line::from(spans));
@@ -248,9 +330,9 @@ fn kink_lines(v: &Value, map: Option<&Mapping>, width: u16) -> Vec<Line<'static>
                 format!("{t} ({})", cols[i].len()),
                 Style::default().fg(colors[i]).add_modifier(Modifier::BOLD),
             )));
-            for (txt, custom) in &cols[i] {
+            for (txt, custom, f) in &cols[i] {
                 let st = if *custom { Style::default().add_modifier(Modifier::BOLD) } else { Style::default() };
-                out.push(Line::from(Span::styled(format!("  {txt}"), st)));
+                out.push(Line::from(vec![Span::raw("  "), mark(*f), Span::styled(txt.clone(), st)]));
             }
             out.push(Line::default());
         }
@@ -306,8 +388,12 @@ impl App {
             buf.set_string(x, inner.y, &label, st);
             x += label.chars().count() as u16 + 1;
         }
-        let hints = [("←→", "tabs"), ("p", "message"), ("m", "memo"), ("b", "bookmark"), ("o", "browser"), ("Esc", "close")];
-        widgets::draw_hints(buf, inner.x, inner.bottom() - 1, &hints, inner.width);
+        let hints: &[(&str, &str)] = if p.tab == 5 {
+            &[("←→", "tabs"), ("n/N", "page"), ("w", "sign guestbook"), ("p", "message"), ("t", "note"), ("Esc", "close")]
+        } else {
+            &[("←→", "tabs"), ("p", "message"), ("t", "note"), ("m", "memo"), ("b", "bookmark"), ("o", "browser"), ("Esc", "close")]
+        };
+        widgets::draw_hints(buf, inner.x, inner.bottom() - 1, hints, inner.width);
         let body = Rect::new(inner.x, inner.y + 2, inner.width, inner.height.saturating_sub(3));
         let data = match &p.data {
             None => {
@@ -335,12 +421,16 @@ impl App {
                     self.images.draw(buf, Rect::new(body.x, body.y, img_w, (img_w / 2).min(body.height)), &url, mode, proto, tc);
                     body_area = Rect::new(body.x + img_w + 2, body.y, body.width - img_w - 2, body.height);
                 }
-                let lines = widgets::wrap_all(&overview_lines(&data, map.as_deref(), status), body_area.width as usize, 2);
+                let mine = self.my_kinks.clone().filter(|_| !name.eq_ignore_ascii_case(&self.chat.me));
+                let lines = widgets::wrap_all(&overview_lines(&data, map.as_deref(), status, mine.as_deref()), body_area.width as usize, 2);
                 render_scrolled(buf, body_area, &lines, scroll);
                 return;
             }
             1 => widgets::wrap_all(&bbcode::to_lines(&vs(&data, "description"), Style::default(), &ns, true), body.width as usize, 0),
-            2 => kink_lines(&data, map.as_deref(), body.width),
+            2 => {
+                let mine = self.my_kinks.clone().filter(|m| !m.is_empty() && !name.eq_ignore_ascii_case(&self.chat.me));
+                kink_lines(&data, map.as_deref(), body.width, mine.as_deref(), self.settings.ascii_borders)
+            }
             3 => {
                 let Dialog::Profile(p) = &self.dialogs[idx] else { return };
                 let imgs = p.images();
@@ -394,6 +484,20 @@ impl App {
                     }
                 }
             }
+            6 => {
+                let Dialog::Profile(p) = &self.dialogs[idx] else { return };
+                match &p.groups {
+                    None => vec![Line::from("Loading…")],
+                    Some(Err(e)) => vec![Line::from(e.clone())],
+                    Some(Ok(g)) if g.is_empty() => vec![Line::from("Not in any groups.")],
+                    Some(Ok(g)) => {
+                        let mut l =
+                            vec![Line::from(Span::styled(format!("{} groups on F-List", g.len()), Style::default().fg(Color::DarkGray)))];
+                        l.extend(g.iter().map(|n| Line::from(format!("• {n}"))));
+                        l
+                    }
+                }
+            }
             _ => {
                 let Dialog::Profile(p) = &self.dialogs[idx] else { return };
                 match &p.guestbook {
@@ -430,7 +534,7 @@ impl App {
                 p.scroll = 0;
                 load_tab = Some(p.tab);
             }
-            KeyCode::Char(c @ '1'..='6') => {
+            KeyCode::Char(c @ '1'..='7') => {
                 p.tab = c as usize - '1' as usize;
                 p.scroll = 0;
                 load_tab = Some(p.tab);
@@ -473,6 +577,8 @@ impl App {
                 p.guestbook = None;
                 load_tab = Some(5);
             }
+            KeyCode::Char('w') if p.tab == 5 => return self.sign_guestbook(&name),
+            KeyCode::Char('t') => return self.compose_note(&name),
             KeyCode::Char('p') => self.run_action(Action::OpenPrivate(name.clone())),
             KeyCode::Char('m') => self.open_memo(&name),
             KeyCode::Char('b') => self.run_action(Action::ToggleBookmark(name.clone())),
@@ -492,6 +598,7 @@ impl App {
                     let n = name.clone();
                     self.api_call(move |api| ApiReply::CharFriends(n.clone(), api.character_friends(&n)));
                 }
+                6 if p.groups.is_none() => self.load_profile_groups(&name),
                 5 if p.guestbook.is_none() => {
                     let (n, page) = (name.clone(), p.gb_page);
                     self.api_call(move |api| ApiReply::Guestbook(n.clone(), page, api.guestbook(&n, page)));
@@ -511,5 +618,24 @@ fn render_scrolled(buf: &mut Buffer, area: Rect, lines: &[Line<'static>], scroll
     if lines.len() > area.height as usize {
         let info = format!(" {}/{} ", (s + area.height as usize).min(lines.len()), lines.len());
         buf.set_string(area.right().saturating_sub(info.len() as u16), area.y, info, Style::default().fg(Color::DarkGray));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kink_matching() {
+        assert_eq!(kink_fit("fave", Some("yes")), Some(true));
+        assert_eq!(kink_fit("yes", Some("no")), Some(false));
+        assert_eq!(kink_fit("no", Some("fave")), Some(false));
+        assert_eq!(kink_fit("maybe", Some("no")), None);
+        assert_eq!(kink_fit("no", Some("no")), None);
+        assert_eq!(kink_fit("fave", None), None);
+        let theirs = serde_json::json!({"kinks": {"1": "fave", "2": "yes", "3": "no", "4": "maybe"}});
+        let mine: MyKinks =
+            [("1", "fave"), ("2", "no"), ("3", "yes"), ("4", "fave")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        assert_eq!(kink_match(&theirs, &mine), (1, 1, 2));
     }
 }

@@ -27,6 +27,10 @@ pub struct Api {
     pub account: String,
     password: Arc<Mutex<String>>,
     ticket: Arc<Mutex<Option<(String, Instant)>>>,
+    /// Character name (lowercase) -> id, from the login and profile lookups.
+    ids: Arc<Mutex<HashMap<String, i64>>>,
+    /// The website session (notes and other site features).
+    pub site: crate::site::Site,
 }
 
 pub fn agent() -> ureq::Agent {
@@ -64,6 +68,8 @@ impl Api {
             account: account.to_string(),
             password: Arc::new(Mutex::new(password.to_string())),
             ticket: Arc::new(Mutex::new(None)),
+            ids: Arc::new(Mutex::new(HashMap::new())),
+            site: crate::site::Site::new(base, account, password),
         }
     }
 
@@ -101,6 +107,7 @@ impl Api {
             _ => Vec::new(),
         };
         characters.sort_by_key(|a| a.0.to_lowercase());
+        self.ids.lock().unwrap().extend(characters.iter().filter(|c| c.1 > 0).map(|c| (c.0.to_lowercase(), c.1)));
         let default_character = match v.get("default_character") {
             Some(Value::Number(n)) => {
                 let id = n.as_i64().unwrap_or(-1);
@@ -148,6 +155,25 @@ impl Api {
 
     pub fn character_data(&self, name: &str) -> Result<Value, String> {
         self.call("character-data.php", &[("name", name)])
+    }
+
+    pub fn remember_id(&self, name: &str, id: i64) {
+        if id > 0 {
+            self.ids.lock().unwrap().insert(name.to_lowercase(), id);
+        }
+    }
+
+    /// A character's id (needed by some website calls).
+    pub fn character_id(&self, name: &str) -> Result<i64, String> {
+        if let Some(id) = self.ids.lock().unwrap().get(&name.to_lowercase()) {
+            return Ok(*id);
+        }
+        let id = vi(&self.character_data(name)?, "id");
+        if id <= 0 {
+            return Err(format!("Could not find the id of {name}."));
+        }
+        self.ids.lock().unwrap().insert(name.to_lowercase(), id);
+        Ok(id)
     }
 
     pub fn character_friends(&self, name: &str) -> Result<Vec<String>, String> {

@@ -5,12 +5,14 @@ mod complete;
 mod console16;
 mod dialogs;
 mod draw;
+mod eicons;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod input;
 mod login;
 mod profile;
 mod server;
+mod site;
 mod widgets;
 
 use std::collections::VecDeque;
@@ -56,6 +58,8 @@ pub enum ApiReply {
     SearchFields(Result<Value, String>),
     Report { character: String, reason: String, result: Result<i64, String> },
     Done(String, Result<(), String>),
+    Site(site::SiteReply),
+    Eicons(Result<Arc<crate::eicons::EiconIndex>, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +138,19 @@ pub struct App {
     /// The online friends panel is shown in this frame.
     friends_panel_shown: bool,
     /// Friends/bookmarks that came online or went offline: (name, online, when).
+    /// Text of the active in-tab search (Ctrl+F).
+    pub find: Option<String>,
+    /// Unread notes and site messages (from the website).
+    pub site_counters: crate::site::Counters,
+    /// When to check the website counters next.
+    pub site_poll_at: Option<Instant>,
+    pub site_error_shown: bool,
+    /// All eicon names, loaded on first use.
+    pub eicon_index: Option<Arc<crate::eicons::EiconIndex>>,
+    pub eicon_loading: bool,
+    /// Your character's kinks, for the kink match in profiles.
+    pub my_kinks: Option<Arc<profile::MyKinks>>,
+    my_kinks_requested: bool,
     pub toasts: Vec<(String, bool, Instant)>,
     pub completion: Option<Completion>,
     pub quit: bool,
@@ -196,6 +213,14 @@ impl App {
             friends_scroll: 0,
             friends_panel_shown: false,
             toasts: Vec::new(),
+            find: None,
+            site_counters: Default::default(),
+            site_poll_at: None,
+            site_error_shown: false,
+            eicon_index: None,
+            eicon_loading: false,
+            my_kinks: None,
+            my_kinks_requested: false,
             completion: None,
             quit: false,
             narrow_console: cfg!(feature = "narrow-console"),
@@ -309,7 +334,14 @@ impl App {
         next_event: &mut dyn FnMut(Duration) -> std::io::Result<Option<Event>>,
     ) -> std::io::Result<()> {
         let mut last_tick = Instant::now();
+        let mut last_anim = Instant::now();
         while !self.quit {
+            // Animated images on screen: redraw ~12 times a second.
+            self.images.animate = self.settings.animate_images;
+            if self.images.animating_last_frame && last_anim.elapsed() >= Duration::from_millis(80) {
+                last_anim = Instant::now();
+                self.dirty = true;
+            }
             if self.dirty {
                 self.images.begin_frame();
                 terminal.draw(|f| self.draw(f))?;
@@ -448,6 +480,7 @@ impl App {
         if self.toasts.len() != before {
             self.dirty = true;
         }
+        self.site_tick();
         if let Some((_, at)) = &self.flash {
             if at.elapsed() > Duration::from_secs(6) {
                 self.flash = None;
@@ -742,7 +775,10 @@ impl App {
         let highlight = msg.highlight;
         let sender = msg.sender.clone();
         let conv = &mut self.chat.conversations[idx];
-        if !viewing && counts && !from_me {
+        if from_me {
+            conv.marker = None;
+        } else if !viewing && counts {
+            conv.mark_unread();
             conv.unread += 1;
             if highlight || is_private {
                 conv.unread_highlight = true;
@@ -800,11 +836,13 @@ impl App {
         }
         let mut front = hist;
         front.push(Message::new(MsgKind::Event, "", "Earlier messages from the log are shown above."));
+        conv.shift_indexes(front.len() as isize);
         for m in front.into_iter().rev() {
             conv.messages.push_front(m);
         }
         while conv.messages.len() > max.max(1) {
             conv.messages.pop_front();
+            conv.shift_indexes(-1);
         }
     }
 
@@ -814,7 +852,15 @@ impl App {
         }
         // Save draft of the current tab.
         let draft = self.input.text().to_string();
-        self.chat.active_conv_mut().draft = draft;
+        let leaving = self.chat.active != idx;
+        let old = self.chat.active_conv_mut();
+        old.draft = draft;
+        if leaving {
+            // The tab was seen; its "new messages" line goes away.
+            old.marker = None;
+            old.find_hit = None;
+            self.find = None;
+        }
         self.clear_typing();
         self.chat.active = idx;
         let conv = &mut self.chat.conversations[idx];
@@ -1023,6 +1069,9 @@ impl App {
                 }
                 return;
             }
+            KeyCode::Char('n') if alt => return self.run_command("/notes"),
+            KeyCode::Char('e') if alt => return self.open_eicon_picker(""),
+            KeyCode::Char('m') if alt => return self.run_command("/messages"),
             KeyCode::Char('j') if alt => return self.prompt("Join channel (name or ADH- id)", "", actions::PromptKind::Join, false),
             KeyCode::Char('p') if alt => return self.prompt("Open private chat with", "", actions::PromptKind::PrivateChat, false),
             KeyCode::Char('w') if alt => {
@@ -1037,6 +1086,15 @@ impl App {
                 };
                 return;
             }
+            KeyCode::Char('f') if ctrl => {
+                if self.find.is_some() {
+                    self.find_step(true);
+                } else {
+                    self.prompt("Find in this tab", "", actions::PromptKind::Find, false);
+                }
+                return;
+            }
+            KeyCode::Char('g') if ctrl && self.find.is_some() => return self.find_step(false),
             KeyCode::Char('l') if ctrl => {
                 self.full_redraw = true;
                 self.images.clear_render_cache();
@@ -1132,7 +1190,11 @@ impl App {
             }
             EditResult::Ignored => {
                 if key.code == KeyCode::Esc {
-                    self.chat.active_conv_mut().scroll = 0;
+                    if self.find.take().is_some() {
+                        self.chat.active_conv_mut().find_hit = None;
+                    } else {
+                        self.chat.active_conv_mut().scroll = 0;
+                    }
                 }
                 if key.code == KeyCode::Up {
                     self.chat.active_conv_mut().scroll += 1;

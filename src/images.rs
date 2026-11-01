@@ -43,16 +43,49 @@ impl Pixels {
     }
 }
 
+/// A decoded image: one frame, or the frames of an animated GIF with their
+/// display times in milliseconds.
+#[derive(Debug)]
+pub struct Frames {
+    pub frames: Vec<(Arc<Pixels>, u32)>,
+    pub total_ms: u32,
+}
+
+impl Frames {
+    fn still(p: Pixels) -> Frames {
+        Frames { frames: vec![(Arc::new(p), 0)], total_ms: 0 }
+    }
+
+    pub fn is_animated(&self) -> bool {
+        self.frames.len() > 1 && self.total_ms > 0
+    }
+
+    /// The frame to show at `ms` milliseconds into the animation.
+    pub fn at(&self, ms: u64) -> (usize, &Arc<Pixels>) {
+        if !self.is_animated() {
+            return (0, &self.frames[0].0);
+        }
+        let mut t = (ms % self.total_ms as u64) as u32;
+        for (i, (p, d)) in self.frames.iter().enumerate() {
+            if t < *d {
+                return (i, p);
+            }
+            t -= d;
+        }
+        (0, &self.frames[0].0)
+    }
+}
+
 pub enum ImgState {
     Loading,
     Failed(String),
-    Ready(Arc<Pixels>),
+    Ready(Arc<Frames>),
 }
 
 #[derive(Debug)]
 pub struct Loaded {
     pub url: String,
-    pub result: Result<Arc<Pixels>, String>,
+    pub result: Result<Arc<Frames>, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +178,13 @@ pub struct ImageStore {
     last_frame: Vec<(String, Rect)>,
     pub cell_px: (u16, u16),
     agent: ureq::Agent,
+    /// Play animated GIFs (the `animate_images` setting).
+    pub animate: bool,
+    /// Animations start counting from here.
+    epoch: std::time::Instant,
+    /// An animation was drawn in the current / last frame.
+    animating: bool,
+    pub animating_last_frame: bool,
 }
 
 impl ImageStore {
@@ -157,6 +197,10 @@ impl ImageStore {
             last_frame: Vec::new(),
             cell_px: cell_pixels(),
             agent: crate::api::agent(),
+            animate: true,
+            epoch: std::time::Instant::now(),
+            animating: false,
+            animating_last_frame: false,
         }
     }
 
@@ -202,7 +246,7 @@ impl ImageStore {
         if area.width == 0 || area.height == 0 {
             return (0, 0);
         }
-        let px = match self.entries.get(url) {
+        let frames = match self.entries.get(url) {
             Some(ImgState::Ready(p)) => p.clone(),
             Some(ImgState::Failed(e)) => {
                 buf.set_stringn(area.x, area.y, format!("[image: {e}]"), area.width as usize, Style::default().fg(Color::DarkGray));
@@ -213,11 +257,6 @@ impl ImageStore {
                 return (area.width.min(17), 1);
             }
         };
-        if let Some(cell) = pixel_output() {
-            if mode != ImageMode::Off {
-                return place_pixels(buf, area, px, cell);
-            }
-        }
         let native = match (mode, proto) {
             (ImageMode::Native, GraphicsProtocol::Kitty) => Some(Proto::Kitty),
             (ImageMode::Native, GraphicsProtocol::Iterm2) => Some(Proto::Iterm2),
@@ -225,6 +264,18 @@ impl ImageStore {
             (ImageMode::Native, GraphicsProtocol::Auto) => detect_protocol(),
             _ => None,
         };
+        let gui = pixel_output().filter(|_| mode != ImageMode::Off);
+        // Native terminal images stay still: replacing them forces full redraws.
+        let (frame, px) = if self.animate && frames.is_animated() && (gui.is_some() || native.is_none()) {
+            self.animating = true;
+            let (i, p) = frames.at(self.epoch.elapsed().as_millis() as u64);
+            (i, p.clone())
+        } else {
+            (0, frames.frames[0].0.clone())
+        };
+        if let Some(cell) = gui {
+            return place_pixels(buf, area, px, cell);
+        }
         if let Some(p) = native {
             let key = (url.to_string(), area.width, area.height);
             if !self.native_cache.contains_key(&key) {
@@ -252,8 +303,11 @@ impl ImageStore {
             ImageMode::ColorAscii => 1,
             _ => 2,
         };
-        let key = (url.to_string(), area.width, area.height, text_mode + if truecolor { 0 } else { 10 });
+        let key = (format!("{url}#{frame}"), area.width, area.height, text_mode + if truecolor { 0 } else { 10 });
         if !self.text_cache.contains_key(&key) {
+            if self.text_cache.len() > 4000 {
+                self.text_cache.clear();
+            }
             let lines = match text_mode {
                 0 => render_ascii(&px, area.width, area.height, false, truecolor),
                 1 => render_ascii(&px, area.width, area.height, true, truecolor),
@@ -273,6 +327,7 @@ impl ImageStore {
     /// Call before drawing a frame.
     pub fn begin_frame(&mut self) {
         self.frame.clear();
+        self.animating = false;
         if let Ok(mut p) = PLACED.lock() {
             p.clear();
         }
@@ -281,6 +336,7 @@ impl ImageStore {
     /// Call after drawing. Returns true when native images moved or disappeared,
     /// in which case the screen must be fully redrawn.
     pub fn end_frame(&mut self) -> bool {
+        self.animating_last_frame = self.animating;
         let changed = self.frame != self.last_frame;
         let had_any = !self.last_frame.is_empty();
         self.last_frame = std::mem::take(&mut self.frame);
@@ -330,7 +386,7 @@ fn cache_path(url: &str) -> std::path::PathBuf {
     crate::paths::cache_dir().join("images").join(format!("{h:016x}"))
 }
 
-fn load(agent: &ureq::Agent, url: &str) -> Result<Arc<Pixels>, String> {
+fn load(agent: &ureq::Agent, url: &str) -> Result<Arc<Frames>, String> {
     let path = cache_path(url);
     let fresh = std::fs::metadata(&path)
         .and_then(|m| m.modified())
@@ -350,17 +406,53 @@ fn load(agent: &ureq::Agent, url: &str) -> Result<Arc<Pixels>, String> {
     decode(&bytes).map(Arc::new)
 }
 
+/// Animations bigger than this (all frames, decoded) only show their first frame.
 #[cfg(feature = "images")]
-fn decode(bytes: &[u8]) -> Result<Pixels, String> {
+const MAX_ANIMATION_BYTES: usize = 48 * 1024 * 1024;
+
+#[cfg(feature = "images")]
+fn decode(bytes: &[u8]) -> Result<Frames, String> {
+    if bytes.starts_with(b"GIF8") {
+        if let Some(f) = decode_gif(bytes) {
+            return Ok(f);
+        }
+    }
     let img = image::load_from_memory(bytes).map_err(|e| format!("cannot decode: {e}"))?;
     // Keep memory bounded for huge profile pictures.
     let img = if img.width() > 1024 || img.height() > 1024 { img.thumbnail(1024, 1024) } else { img };
     let rgba = img.to_rgba8();
-    Ok(Pixels { width: rgba.width(), height: rgba.height(), rgba: rgba.into_raw() })
+    Ok(Frames::still(Pixels { width: rgba.width(), height: rgba.height(), rgba: rgba.into_raw() }))
+}
+
+/// All frames of an animated GIF, or None to decode it as a still image.
+#[cfg(feature = "images")]
+fn decode_gif(bytes: &[u8]) -> Option<Frames> {
+    use image::AnimationDecoder;
+    let dec = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let mut frames = Vec::new();
+    let mut size = 0usize;
+    for f in dec.into_frames() {
+        let f = f.ok()?;
+        let (num, den) = f.delay().numer_denom_ms();
+        // Like browsers: very short delays play at 100 ms.
+        let ms = num.checked_div(den).unwrap_or(100);
+        let ms = if ms < 20 { 100 } else { ms.min(10_000) };
+        let buf = f.into_buffer();
+        size += buf.as_raw().len();
+        if size > MAX_ANIMATION_BYTES || buf.width() > 1024 || buf.height() > 1024 {
+            return None;
+        }
+        frames.push((Arc::new(Pixels { width: buf.width(), height: buf.height(), rgba: buf.into_raw() }), ms));
+    }
+    if frames.len() < 2 {
+        return None;
+    }
+    let total_ms = frames.iter().map(|f| f.1).sum();
+    Some(Frames { frames, total_ms })
 }
 
 #[cfg(not(feature = "images"))]
-fn decode(_bytes: &[u8]) -> Result<Pixels, String> {
+fn decode(_bytes: &[u8]) -> Result<Frames, String> {
     Err("built without image support".into())
 }
 
@@ -696,6 +788,48 @@ mod tests {
         let used = place_pixels(&mut buf, Rect::new(0, 0, 10, 4), big, (8, 16));
         assert_eq!(used, (8, 4));
     }
+    #[cfg(feature = "images")]
+    #[test]
+    fn animated_gif() {
+        use image::codecs::gif::{GifEncoder, Repeat};
+        use image::{Delay, Frame, Rgba, RgbaImage};
+        let mut bytes = Vec::new();
+        {
+            let mut enc = GifEncoder::new(&mut bytes);
+            enc.set_repeat(Repeat::Infinite).unwrap();
+            for (c, ms) in [([255, 0, 0, 255], 200), ([0, 0, 255, 255], 0)] {
+                let img = RgbaImage::from_pixel(4, 4, Rgba(c));
+                enc.encode_frame(Frame::from_parts(img, 0, 0, Delay::from_numer_denom_ms(ms, 1))).unwrap();
+            }
+        }
+        let f = decode(&bytes).unwrap();
+        assert!(f.is_animated());
+        // A delay of 0 plays at 100 ms, like in browsers.
+        assert_eq!(f.frames.iter().map(|x| x.1).collect::<Vec<_>>(), vec![200, 100]);
+        assert_eq!(f.total_ms, 300);
+        assert_eq!(f.at(0).0, 0);
+        assert_eq!(f.at(199).0, 0);
+        assert_eq!(f.at(250).0, 1);
+        assert_eq!(f.at(310).0, 0);
+        assert_eq!(f.at(250).1.get(0, 0), [0, 0, 255, 255]);
+
+        // Drawn in blocks mode, the frame changes with time.
+        let mut store = ImageStore::new();
+        store.entries.insert("x".into(), ImgState::Ready(Arc::new(f)));
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 2));
+        store.begin_frame();
+        store.draw(&mut buf, Rect::new(0, 0, 4, 2), "x", ImageMode::Blocks, GraphicsProtocol::Auto, true);
+        store.end_frame();
+        assert!(store.animating_last_frame);
+        store.epoch = std::time::Instant::now();
+        store.draw(&mut buf, Rect::new(0, 0, 4, 2), "x", ImageMode::Blocks, GraphicsProtocol::Auto, true);
+        let first = buf[(0, 0)].fg;
+        // 250 ms into the animation: the second frame.
+        store.epoch = std::time::Instant::now() - std::time::Duration::from_millis(250);
+        store.draw(&mut buf, Rect::new(0, 0, 4, 2), "x", ImageMode::Blocks, GraphicsProtocol::Auto, true);
+        assert_ne!(buf[(0, 0)].fg, first);
+    }
+
     fn checker() -> Pixels {
         let mut rgba = Vec::new();
         for y in 0..8u32 {

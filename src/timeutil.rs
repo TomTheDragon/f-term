@@ -122,6 +122,12 @@ pub fn fmt_duration(secs: i64) -> String {
     }
 }
 
+/// A duration as "m:ss", rounded up so it never shows 0:00 while waiting.
+pub fn mmss(d: std::time::Duration) -> String {
+    let secs = d.as_secs() + u64::from(d.subsec_nanos() > 0);
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

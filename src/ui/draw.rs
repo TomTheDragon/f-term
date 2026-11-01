@@ -499,6 +499,21 @@ impl App {
         rows
     }
 
+    /// Scroll the current tab so message `i` starts in the middle of the view.
+    pub(super) fn scroll_to_message(&mut self, i: usize) {
+        let width = (self.hit.messages.width as usize).max(5);
+        let h = (self.hit.messages.height as usize).max(2);
+        let conv = &self.chat.conversations[self.chat.active];
+        let mut below = 0;
+        for (k, m) in conv.messages.iter().enumerate().skip(i) {
+            below += self.message_rows(m, width, conv.show_ads).len();
+            if conv.marker == Some(k) && k > i {
+                below += 1;
+            }
+        }
+        self.chat.active_conv_mut().scroll = below.saturating_sub(h / 2);
+    }
+
     fn draw_messages(&mut self, buf: &mut Buffer, area: Rect) {
         if area.height == 0 || area.width < 5 {
             return;
@@ -514,8 +529,19 @@ impl App {
         let mut rows: Vec<Row> = Vec::new();
         let need = h + scroll;
         let mut total_known_complete = true;
-        for m in conv.messages.iter().rev() {
+        let n_msgs = conv.messages.len();
+        for (k, m) in conv.messages.iter().rev().enumerate() {
             let mut r = self.message_rows(m, width, show_ads);
+            if conv.find_hit == Some(n_msgs - 1 - k) {
+                for row in &mut r {
+                    if let Row::Text(l) = row {
+                        *l = std::mem::take(l).patch_style(Style::default().add_modifier(Modifier::REVERSED));
+                    }
+                }
+            }
+            if conv.marker == Some(n_msgs - 1 - k) {
+                r.insert(0, Row::Text(new_messages_line(width, self.settings.ascii_borders)));
+            }
             r.append(&mut rows);
             rows = r;
             if rows.len() > need {
@@ -583,7 +609,12 @@ impl App {
             ConvKind::Private(n) => (n.clone(), self.chat.vars.priv_max),
         };
         let len = self.input.text().len();
-        let title = if limit > 0 && len > 0 { format!("→ {target}  {len}/{limit}") } else { format!("→ {target}") };
+        let mut title = if limit > 0 && len > 0 { format!("→ {target}  {len}/{limit}") } else { format!("→ {target}") };
+        if conv.mode != "chat" {
+            if let Some(left) = conv.ad_wait(self.chat.vars.lfrp_flood) {
+                title.push_str(&format!("  · next ad {}", crate::timeutil::mmss(left)));
+            }
+        }
         let mut b = widgets::block(&title, self.settings.ascii_borders, self.focus == Focus::Input);
         if self.compact {
             b = b.borders(Borders::TOP);
@@ -634,6 +665,12 @@ impl App {
         if !self.my_status_msg.is_empty() {
             spans.push(Span::styled(format!(" {}", trunc(&bbcode::strip(&self.my_status_msg), 30)), Style::default().fg(Color::DarkGray)));
         }
+        if let Some(q) = &self.find {
+            spans.push(Span::styled(
+                format!("  find \"{}\": Ctrl+F older · Ctrl+G newer · Esc ends", trunc(q, 20)),
+                Style::default().fg(Color::LightCyan),
+            ));
+        }
         if let Some((msg, _)) = &self.flash {
             spans.push(Span::styled(format!("  {msg}"), Style::default().fg(Color::Yellow)));
         }
@@ -644,6 +681,11 @@ impl App {
             let text = format!("⚑ {unread} (Alt+A)");
             widgets::add_key_hit(Rect::new(x, area.y, str_width(&text) as u16, 1), KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT));
             spans.push(Span::styled(format!("  {text}"), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        }
+        for (text, key) in self.site_counter_spans() {
+            let x = area.x + spans.iter().map(|s| str_width(&s.content)).sum::<usize>() as u16 + 2;
+            widgets::add_key_hit(Rect::new(x, area.y, str_width(&text) as u16, 1), key);
+            spans.push(Span::styled(format!("  {text}"), Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)));
         }
         let used: usize = spans.iter().map(|s| str_width(&s.content)).sum();
         buf.set_line(area.x, area.y, &Line::from(spans), area.width);
@@ -680,4 +722,13 @@ impl App {
             .collect();
         widgets::list(buf, inner, &items, c.sel, true);
     }
+}
+
+/// The "new messages" separator drawn above the first unread message.
+fn new_messages_line(width: usize, ascii: bool) -> Line<'static> {
+    let label = " new messages ";
+    let dash = if ascii { "-" } else { "─" };
+    let side = width.saturating_sub(label.len()) / 2;
+    let rest = width.saturating_sub(label.len() + side);
+    Line::from(Span::styled(format!("{}{label}{}", dash.repeat(side), dash.repeat(rest)), Style::default().fg(Color::LightRed)))
 }

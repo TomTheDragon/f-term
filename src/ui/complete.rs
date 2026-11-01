@@ -67,6 +67,16 @@ impl App {
             let auto = !matches!(kind, Arg::Text | Arg::Number | Arg::Nothing) || def.name == "help";
             return Some(Ctx { start: seg_start, word, items, auto, add_space: false });
         }
+        // An eicon name inside [eicon]…
+        if let Some((start, word)) = super::eicons::eicon_word(before) {
+            let items = match &self.eicon_index {
+                Some(idx) if !word.is_empty() => {
+                    idx.search(word, 50).into_iter().map(|n| (format!("{n}[/eicon]"), String::new())).collect()
+                }
+                _ => Vec::new(),
+            };
+            return Some(Ctx { start, word: word.to_string(), items, auto: true, add_space: false });
+        }
         // Plain text: complete the last word as a character name.
         let start = before.rfind(char::is_whitespace).map(|i| i + before[i..].chars().next().unwrap().len_utf8()).unwrap_or(0);
         let word = before[start..].to_string();
@@ -192,6 +202,10 @@ impl App {
     }
 
     pub(super) fn completion_start(&mut self) {
+        let before = &self.input.text()[..self.input.cursor()];
+        if super::eicons::eicon_word(before).is_some() && self.eicon_index.is_none() {
+            return self.ensure_eicons();
+        }
         if let Some(ctx) = self.completion_context() {
             if ctx.items.is_empty() {
                 return;

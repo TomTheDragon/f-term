@@ -669,7 +669,7 @@ impl ImageCache {
             return s.clone();
         }
         let s = Arc::new(images::resample(&p.pixels, p.width, p.height));
-        if self.scaled.len() >= 64 {
+        if self.scaled.len() >= 256 {
             self.scaled.remove(0);
         }
         self.scaled.push((p.pixels.clone(), s.clone()));
@@ -735,6 +735,34 @@ pub(super) fn backend(screen: Shared, wake: Arc<dyn Fn() + Send + Sync>) -> GuiB
 
 pub(super) fn events(rx: Receiver<Event>, on_drop: Box<dyn FnOnce() + Send>) -> GuiEvents {
     GuiEvents { rx, on_drop: Some(on_drop) }
+}
+
+/// Draw one frame the way the window does and save it as a PNG (used for
+/// the README screenshots, see `screenshots` in src/ui/tests.rs).
+/// `pixels`: images as real pixels like the window shows them; otherwise as
+/// in a terminal (block characters etc.).
+#[cfg(all(test, feature = "images", not(windows)))]
+pub(crate) fn save_png(cols: u16, rows: u16, px: f32, pixels: bool, path: &std::path::Path, draw: impl FnOnce(&mut ratatui::Frame)) {
+    use ratatui::backend::Backend as _;
+    let mut r = soft::Renderer::new(px);
+    images::set_pixel_output(pixels.then_some((r.cell_w as u16, r.cell_h as u16)));
+    let screen: Shared = Arc::new(Mutex::new(Screen::new()));
+    {
+        let mut s = screen.lock().unwrap();
+        s.resize(cols, rows);
+        (s.cell_w, s.cell_h) = (r.cell_w, r.cell_h);
+    }
+    let mut term = ratatui::Terminal::new(backend(screen.clone(), Arc::new(|| {}))).unwrap();
+    term.draw(draw).unwrap();
+    term.backend_mut().flush().unwrap();
+    images::set_pixel_output(None);
+    let mut s = screen.lock().unwrap();
+    s.cursor_visible = false;
+    let (w, h) = (cols as usize * r.cell_w as usize, rows as usize * r.cell_h as usize);
+    let mut pixels = vec![DEFAULT_BG; w * h];
+    r.render(&mut soft::Canvas { pixels: &mut pixels, width: w, height: h }, &mut s);
+    let rgb: Vec<u8> = pixels.iter().flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8]).collect();
+    image::RgbImage::from_raw(w as u32, h as u32, rgb).unwrap().save(path).unwrap();
 }
 
 #[cfg(test)]

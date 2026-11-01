@@ -7,6 +7,35 @@ F-Chat client: channels and private rooms, private messages, ads, dice, statuses
 profiles, friends and bookmarks, chat logs, character search, reports and all
 channel and global moderator commands.
 
+![A channel in the GUI version: member list, inline avatars and eicons, an ad and a private chat tab](docs/screenshots/chat.png)
+
+<details>
+<summary>More screenshots</summary>
+
+Images (avatars, eicons, profile pictures) are shown as real pixels in the GUI
+versions and as coloured block characters in a terminal (`/images blocks`;
+`/images native` uses the kitty, iTerm2 or sixel graphics of terminals that
+have them).
+
+| | |
+|---|---|
+| ![The chat in a terminal, images as blocks](docs/screenshots/chat-blocks.png) | ![Compact layout for an 80x25 console](docs/screenshots/console-80x25.png) |
+| The same chat in a terminal (block images, `/set inline_images on`) | Compact layout for 80x25 consoles (Windows 9x) |
+| ![Profile overview in the GUI version](docs/screenshots/profile.png) | ![Profile overview in a terminal](docs/screenshots/profile-blocks.png) |
+| Profile with the kink match (GUI) | The same in a terminal |
+| ![Profile images in the GUI version](docs/screenshots/profile-images.png) | ![Profile images in a terminal](docs/screenshots/profile-images-blocks.png) |
+| Profile images (GUI, original size) | Profile images in a terminal |
+| ![Kinks tab: ✓ liked by both, ✗ conflicts](docs/screenshots/profile-kinks.png) | ![F-List notes](docs/screenshots/notes.png) |
+| Kinks tab: ✓ liked by both, ✗ conflicts | F-List notes (Alt+N) |
+| ![Site messages: character updates](docs/screenshots/site-messages.png) | ![Login](docs/screenshots/login.png) |
+| Site messages with character updates (Alt+M) | Login |
+
+The screenshots show made-up characters and pictures. They are drawn by the
+GUI version's renderer (the terminal ones with the terminal look) and can be
+made again with `cargo test --features gui -- --ignored screenshots`.
+
+</details>
+
 ## Features
 
 - **Login**
@@ -30,11 +59,23 @@ channel and global moderator commands.
   - BBCode is rendered: bold, italic, underline, strikethrough, colours, URLs,
     `[user]`, `[icon]`, `[eicon]`, `[session]`, `[channel]`, spoilers, quotes,
     `[noparse]`, `[hr]` and more.
+  - A "new messages" line marks where you stopped reading in a tab.
+  - Search the current tab with **Ctrl+F** (`/find`): Ctrl+F jumps to older
+    matches, Ctrl+G to newer ones, Esc ends the search.
+  - Ad cooldown: the input box shows when the next ad may be posted in a
+    channel (the server allows one every 10 minutes), and too early ads are
+    held back instead of being rejected by the server.
 - **Autocompletion** (Tab)
   - Command names, with usage, pop up as you type `/`.
   - Arguments complete too: characters, channel members, channels/rooms,
     statuses, channel modes, settings and log names.
   - Character names complete in normal text.
+  - Eicon names complete after `[eicon]`.
+- **Eicon picker** (**Alt+E**, `/eicons [search]`): search all eicons by name,
+  with a preview, and insert one. F-List has no eicon search, so the list of
+  names comes from the eicon database at [xariah.net](https://xariah.net/eicons/)
+  (also used by the Horizon client). It is downloaded once (about 18 MB) on
+  first use, kept in the cache folder and updated daily.
 - **Images**, switchable at any time (`/images <mode>` or F6):
   - `off`
   - `ascii`: plain ASCII art, works on any terminal.
@@ -47,9 +88,35 @@ channel and global moderator commands.
   (`/avatar`, `/eicon`, `/image <url>`, `/links`). With `inline_images` on, they
   also appear as small pictures under chat messages that contain
   `[icon]`/`[eicon]`.
+
+  Animated GIFs and eicons play (`animate_images`, on by default), except with
+  native terminal graphics, where they show their first frame.
 - **Profiles** (**F4**, `/profile`): overview with info fields, description,
-  kinks (including custom kinks and sub-kinks), images, friends, guestbook and
-  your private memo (`/memo`).
+  kinks (including custom kinks and sub-kinks), images, friends, guestbook,
+  groups and your private memo (`/memo`).
+  - Kink match: the overview counts the kinks you both like and the conflicts
+    (one of you likes it, the other said no). The kinks tab marks them with
+    ✓ and ✗.
+  - Sign the guestbook (**w** on the guestbook tab), publicly or privately.
+- **F-List website features.** These are not in F-List's official API, so
+  F-Term logs in to the website like a browser does, with the same account.
+  The session is kept in memory only.
+  - **Notes** (**Alt+N**, `/notes`): inbox, outbox, trash, your own folders,
+    unread and starred notes. Read, reply, write (`/note <character>`), star,
+    mark read or unread, move, trash and restore, report a note, and search
+    by text or by character (`@name`). Folders can be created, renamed and
+    deleted, and the trash can be emptied.
+  - **Site messages** (**Alt+M**, `/messages`): the message center with
+    friend requests, guestbook posts, comments, group requests, ticket
+    replies, character and thread updates. Character updates list what
+    changed (kinks, description, info fields, avatar); PgUp/PgDn pages
+    through 20 messages at a time.
+  - **Unread counters**: the status bar shows unread notes and site messages.
+    They are checked every 5 minutes (`site_poll_minutes`, 0 = off) and right
+    after the chat server announces a new note or other site event.
+  - **News** (`/news [page]`): F-List's news posts.
+  - **Roleplay ads** (`/personals [filter]`): the ads from the F-List front
+    page, filterable by any text, with the full ad below the list.
 - **Friends and bookmarks** (**F3**): lists with online status, accept, deny or
   cancel friend requests, bookmark, unbookmark, unfriend. The console tab shows
   who of them is online, with their status, at the top right
@@ -60,16 +127,19 @@ channel and global moderator commands.
 - **Character search** (**F8**, `/search`) by kinks, genders, orientations,
   languages, furry preferences and roles.
 - **Chat logs** are written to disk per conversation and day. Browse and search
-  them with **F7**. When you open a channel or private chat, its last lines from
-  the log are shown (`load_history_lines`, 30 by default, 0 = off), and
-  `/recent` lists recent conversations.
+  them with **F7**. Search all logs at once with `/logsearch <text>` (or
+  Ctrl+F in the log browser). When you open a channel or private chat, its last
+  lines from the log are shown (`load_history_lines`, 30 by default, 0 = off),
+  and `/recent` lists recent conversations.
 - **Notifications** for private messages and highlights (your name plus custom
   words):
-  - terminal bell
+  - terminal bell (in the GUI versions: the system sound on Windows, the
+    desktop's message sound on Linux)
   - desktop notifications via OSC 9/777
+  - a sound file of your own (`notify_sound`, a WAV file)
   - or your own command, e.g. `notify-send "%t" "%m"`
 
-  Tabs can be muted individually.
+  Tabs can be muted individually. `/testnotify` tries your settings.
 - **Status**
   - Online, looking, busy, DND, away and idle, with status messages (**F5**) and
     a list of recent ones.
@@ -105,6 +175,9 @@ Press **F1** in the app for all keys and commands. The most important ones:
 | Alt+A | Jump to the next unread tab |
 | Alt+W | Close tab |
 | Alt+J / Alt+P | Join a channel / open a private chat by name |
+| Ctrl+F | Search the current tab |
+| Alt+N / Alt+M | F-List notes / site messages |
+| Alt+E | Eicon picker |
 | Ctrl+O | Move focus to the member list (Enter opens the user menu) and the tab list |
 | PgUp / PgDn | Scroll |
 | F2 … F8 | Channels, friends, profile, status, settings, logs, search |
@@ -296,6 +369,14 @@ Protocol references:
 - [F-Chat client commands](https://wiki.f-list.net/F-Chat_Client_Commands)
 - [F-Chat error codes](https://wiki.f-list.net/F-Chat_Error_Codes)
 - [F-List JSON API](https://toys.in.newtsin.space/api-docs/)
+
+The website features (notes, site messages, news, roleplay ads, groups,
+guestbook posts) use the website's own JSON endpoints, as its pages do
+(`src/site.rs`). To test them against the real site with a test account:
+
+```
+FLIST_TEST_ACCOUNT=… FLIST_TEST_PASSWORD=… cargo test -- --ignored site_live
+```
 
 ## License
 

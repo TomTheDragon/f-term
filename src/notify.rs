@@ -13,8 +13,16 @@ pub fn notify(settings: &Settings, title: &str, body: &str) {
         #[cfg(feature = "gui")]
         if crate::ui::gui::active() {
             crate::ui::gui::bell();
+            // The Linux window has no bell sound of its own: use the desktop's.
+            if cfg!(all(unix, not(target_os = "macos"))) && settings.notify_sound.trim().is_empty() {
+                spawn_quiet("canberra-gtk-play", &["--id=message-new-instant"]);
+            }
         }
         let _ = out.write_all(b"\x07");
+    }
+    let sound = settings.notify_sound.trim();
+    if !sound.is_empty() {
+        play_sound(sound);
     }
     if settings.notify_osc {
         // OSC 777 (rxvt/foot/wezterm/ghostty), OSC 9 (iTerm2/kitty/Windows Terminal).
@@ -33,6 +41,58 @@ pub fn notify(settings: &Settings, title: &str, body: &str) {
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn();
+        }
+    }
+}
+
+#[cfg_attr(windows, allow(dead_code))]
+fn spawn_quiet(prog: &str, args: &[&str]) -> bool {
+    std::process::Command::new(prog)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+/// Play a sound file (WAV) without waiting for it.
+#[cfg(windows)]
+pub fn play_sound(path: &str) {
+    // winmm.dll is loaded when needed, so the builds don't have to link it.
+    type PlaySoundA = unsafe extern "system" fn(*const u8, isize, u32) -> i32;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LoadLibraryA(name: *const u8) -> isize;
+        fn GetProcAddress(module: isize, name: *const u8) -> *const std::ffi::c_void;
+    }
+    const SND_ASYNC: u32 = 0x1;
+    const SND_NODEFAULT: u32 = 0x2;
+    const SND_FILENAME: u32 = 0x2_0000;
+    let Ok(file) = std::ffi::CString::new(path) else { return };
+    unsafe {
+        let lib = LoadLibraryA(b"winmm.dll\0".as_ptr());
+        if lib == 0 {
+            return;
+        }
+        let f = GetProcAddress(lib, b"PlaySoundA\0".as_ptr());
+        if f.is_null() {
+            return;
+        }
+        let play: PlaySoundA = std::mem::transmute(f);
+        play(file.as_ptr() as *const u8, 0, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn play_sound(path: &str) {
+    let players: &[(&str, &[&str])] =
+        if cfg!(target_os = "macos") { &[("afplay", &[])] } else { &[("pw-play", &[]), ("paplay", &[]), ("aplay", &["-q"])] };
+    for (prog, args) in players {
+        let mut a: Vec<&str> = args.to_vec();
+        a.push(path);
+        if spawn_quiet(prog, &a) {
+            return;
         }
     }
 }

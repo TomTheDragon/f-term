@@ -32,6 +32,7 @@ pub enum Action {
     DeleteAd(usize),
     InsertText(String),
     FriendRequestAction(String, String),
+    Site(super::site::SiteAction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +45,8 @@ pub enum PromptKind {
     Report,
     Command,
     SaveSetting,
+    Find,
+    Site(super::site::SitePrompt),
 }
 
 impl App {
@@ -89,7 +92,12 @@ impl App {
                         self.info(&format!("Ad is too long ({} / {} bytes).", text.len(), self.chat.vars.lfrp_max));
                         return;
                     }
+                    if let Some(left) = conv.ad_wait(self.chat.vars.lfrp_flood) {
+                        self.info(&format!("You can post the next ad here in {}.", crate::timeutil::mmss(left)));
+                        return;
+                    }
                     self.send_chat(protocol::lrp(&id, text));
+                    self.chat.active_conv_mut().last_ad = Some(std::time::Instant::now());
                 } else {
                     if conv.mode == "ads" {
                         self.info("This channel only allows ads. Use /ad to post one.");
@@ -163,6 +171,15 @@ impl App {
             def.name,
             "help"
                 | "clear"
+                | "find"
+                | "logsearch"
+                | "notes"
+                | "note"
+                | "messages"
+                | "news"
+                | "personals"
+                | "eicons"
+                | "testnotify"
                 | "clearall"
                 | "logs"
                 | "settings"
@@ -296,15 +313,12 @@ impl App {
                 self.set_status(Status::Online, &msg, true);
             }
             "clear" => {
-                let c = self.chat.active_conv_mut();
-                c.messages.clear();
-                c.scroll = 0;
+                self.chat.active_conv_mut().clear_messages();
                 self.full_redraw = true;
             }
             "clearall" => {
                 for c in &mut self.chat.conversations {
-                    c.messages.clear();
-                    c.scroll = 0;
+                    c.clear_messages();
                 }
                 self.full_redraw = true;
             }
@@ -394,6 +408,54 @@ impl App {
                     self.info("No recent conversations yet.");
                 } else {
                     self.dialogs.push(Dialog::menu("Recent conversations", items));
+                }
+            }
+            "notes" | "note" | "messages" | "news" | "personals" if self.api.is_none() => {
+                self.info("Log in first to use the F-List website features.");
+            }
+            "notes" => {
+                let (word, arg) = rest.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())).unwrap_or((rest, ""));
+                let list = match word.to_lowercase().as_str() {
+                    "" | "inbox" => crate::site::NoteList::Folder(1),
+                    "outbox" | "sent" => crate::site::NoteList::Folder(2),
+                    "trash" => crate::site::NoteList::Folder(3),
+                    "unread" => crate::site::NoteList::Unread,
+                    "starred" => crate::site::NoteList::Starred,
+                    "with" if !arg.is_empty() => crate::site::NoteList::With(arg.to_string()),
+                    "search" if !arg.is_empty() => crate::site::NoteList::Containing(arg.to_string()),
+                    _ => return self.info(&format!("Usage: {}", def.usage)),
+                };
+                self.open_notes(list);
+            }
+            "note" => self.compose_note(rest),
+            "eicons" => self.open_eicon_picker(rest),
+            "testnotify" => {
+                crate::notify::notify(&self.settings, "F-Term", "This is a test notification.");
+                self.info("Sent a test notification (bell, desktop notification, sound and notify_command, as set).");
+            }
+            "messages" => self.open_messages(),
+            "news" => {
+                let page = rest.parse::<usize>().unwrap_or(1).max(1);
+                self.open_news(page - 1);
+            }
+            "personals" => self.open_personals(rest),
+            "logsearch" => {
+                let me = self.chat.me.clone();
+                if me.is_empty() {
+                    return self.info("Log in first to search your logs.");
+                }
+                if !need(self, rest) {
+                    return;
+                }
+                let mut d = dialogs::LogsState::new(&me);
+                d.search(&me, rest);
+                self.dialogs.push(Dialog::Logs(Box::new(d)));
+            }
+            "find" => {
+                if rest.is_empty() {
+                    self.prompt("Find in this tab", "", PromptKind::Find, false);
+                } else {
+                    self.find_start(rest);
                 }
             }
             "logs" => {
@@ -583,6 +645,11 @@ impl App {
                 l.auto_pick = false;
                 self.login = Some(l);
                 self.api = None;
+                self.site_counters = Default::default();
+                self.my_kinks = None;
+                self.my_kinks_requested = false;
+                self.site_poll_at = None;
+                self.site_error_shown = false;
             }
             "quit" => self.quit = true,
             "raw" => {
@@ -764,6 +831,12 @@ impl App {
         self.dialogs.push(Dialog::Profile(Box::new(super::profile::ProfileState::new(&name))));
         let n = name.clone();
         self.api_call(move |api| ApiReply::Profile(n.clone(), api.character_data(&n)));
+        // Your own kinks, for the kink match (once per login).
+        let me = self.chat.me.clone();
+        if !self.my_kinks_requested && !me.is_empty() && !me.eq_ignore_ascii_case(&name) {
+            self.my_kinks_requested = true;
+            self.api_call(move |api| ApiReply::Profile(me.clone(), api.character_data(&me)));
+        }
     }
 
     pub fn open_memo(&mut self, name: &str) {
@@ -824,6 +897,7 @@ impl App {
         let mut items = vec![
             MenuItem::new("Private message", Action::OpenPrivate(n.clone())),
             MenuItem::new("View profile", Action::Profile(n.clone())),
+            MenuItem::new("Send a note…", Action::Site(super::site::SiteAction::ComposeNote(n.clone()))),
             MenuItem::new("Show avatar", Action::ShowImage(format!("Avatar of {n}"), crate::images::avatar_url(&n))),
             MenuItem::new("Edit memo", Action::Memo(n.clone())),
             MenuItem::new(if self.chat.is_bookmarked(&n) { "Remove bookmark" } else { "Bookmark" }, Action::ToggleBookmark(n.clone())),
@@ -900,6 +974,8 @@ impl App {
                     self.submit_report(&a[0], &a[1]);
                 }
             }
+            PromptKind::Find => self.find_start(&v),
+            PromptKind::Site(k) => self.on_site_prompt(k, value, extra),
             PromptKind::Command => {
                 if !v.is_empty() {
                     self.submit(&v);
@@ -940,6 +1016,7 @@ impl App {
     pub fn run_action(&mut self, action: Action) {
         match action {
             Action::Quit => self.quit = true,
+            Action::Site(a) => self.run_site_action(a),
             Action::Join(id) => self.join_channel(&id),
             Action::OpenPrivate(n) => {
                 self.dialogs.clear();
@@ -1015,7 +1092,18 @@ impl App {
 
     pub(super) fn on_api(&mut self, r: ApiReply) {
         match r {
+            ApiReply::Site(r) => self.on_site(r),
+            ApiReply::Eicons(r) => self.on_eicons(r),
             ApiReply::Profile(name, data) => {
+                if name.eq_ignore_ascii_case(&self.chat.me) {
+                    match &data {
+                        Ok(v) => self.my_kinks = Some(std::sync::Arc::new(super::profile::my_kinks_from(v))),
+                        Err(_) => self.my_kinks_requested = false,
+                    }
+                }
+                if let (Ok(v), Some(api)) = (&data, &self.api) {
+                    api.remember_id(&name, crate::protocol::vi(v, "id"));
+                }
                 for d in self.dialogs.iter_mut() {
                     if let Dialog::Profile(p) = d {
                         if p.name.eq_ignore_ascii_case(&name) {
@@ -1124,5 +1212,46 @@ fn strip_me(wire: &str) -> String {
         rest.to_string()
     } else {
         rest.trim_start().to_string()
+    }
+}
+
+impl App {
+    /// Start an in-tab search and jump to the newest match.
+    pub(super) fn find_start(&mut self, text: &str) {
+        let text = text.trim();
+        self.chat.active_conv_mut().find_hit = None;
+        if text.is_empty() {
+            self.find = None;
+            return;
+        }
+        self.find = Some(text.to_string());
+        self.find_step(true);
+    }
+
+    /// Jump to the next older (or newer) message containing the search text.
+    pub(super) fn find_step(&mut self, older: bool) {
+        let Some(q) = self.find.as_ref().map(|q| q.to_lowercase()) else { return };
+        let conv = self.chat.active_conv();
+        let hit = |i: &usize| {
+            let m = &conv.messages[*i];
+            m.sender.to_lowercase().contains(&q) || crate::bbcode::strip(&m.text).to_lowercase().contains(&q)
+        };
+        let n = conv.messages.len();
+        let found = if older { (0..conv.find_hit.unwrap_or(n)).rev().find(hit) } else { conv.find_hit.and_then(|h| (h + 1..n).find(hit)) };
+        match found {
+            Some(i) => {
+                self.chat.active_conv_mut().find_hit = Some(i);
+                self.scroll_to_message(i);
+            }
+            None if conv.find_hit.is_none() => self.flash("Not found in this tab (older messages are in the logs, F7)."),
+            None if older => self.flash("No older matches."),
+            None => {
+                // Past the newest match: back to the bottom.
+                let c = self.chat.active_conv_mut();
+                c.find_hit = None;
+                c.scroll = 0;
+                self.flash("No newer matches.");
+            }
+        }
     }
 }

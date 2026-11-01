@@ -170,6 +170,13 @@ pub struct Conversation {
     pub description: String,
     pub show_ads: bool,
     pub joined: bool,
+    /// When we last posted an ad here (for the server's ad cooldown).
+    pub last_ad: Option<std::time::Instant>,
+    /// Index of the first message that arrived while the tab was not being
+    /// viewed; a "new messages" line is drawn above it.
+    pub marker: Option<usize>,
+    /// Index of the message found by the in-tab search (Ctrl+F).
+    pub find_hit: Option<usize>,
     // Private chat data
     pub typing: Typing,
     pub pinned: bool,
@@ -194,6 +201,9 @@ impl Conversation {
             description: String::new(),
             show_ads: true,
             joined: false,
+            last_ad: None,
+            marker: None,
+            find_hit: None,
             typing: Typing::Clear,
             pinned: false,
             muted: false,
@@ -231,7 +241,40 @@ impl Conversation {
         self.messages.push_back(msg);
         while self.messages.len() > max.max(50) {
             self.messages.pop_front();
+            self.shift_indexes(-1);
         }
+    }
+
+    /// Keep the marker and search hit on the same message after messages
+    /// were added (+) or removed (-) at the front.
+    pub fn shift_indexes(&mut self, delta: isize) {
+        let shift = |i: usize| i.checked_add_signed(delta);
+        self.marker = self.marker.map(|m| shift(m).unwrap_or(0));
+        self.find_hit = self.find_hit.and_then(shift);
+    }
+
+    pub fn clear_messages(&mut self) {
+        self.messages.clear();
+        self.scroll = 0;
+        self.marker = None;
+        self.find_hit = None;
+    }
+
+    /// Put the "new messages" line above the next message, unless one is already set.
+    pub fn mark_unread(&mut self) {
+        if self.marker.is_none() {
+            self.marker = Some(self.messages.len());
+            if self.scroll > 0 {
+                self.scroll += 1;
+            }
+        }
+    }
+
+    /// Time left before another ad may be posted here.
+    pub fn ad_wait(&self, flood_secs: f64) -> Option<std::time::Duration> {
+        let wait = std::time::Duration::from_secs_f64(flood_secs.max(0.0));
+        let left = wait.checked_sub(self.last_ad?.elapsed())?;
+        (left.as_secs() > 0).then_some(left)
     }
 
     pub fn is_op(&self, name: &str) -> bool {

@@ -523,6 +523,10 @@ impl App {
             other => format!("Site notification ({other}): {data}"),
         };
         self.sys(&text);
+        self.poll_site_soon();
+        if kind == "note" {
+            self.refresh_open_notes();
+        }
         if matches!(kind, "note" | "friendrequest") {
             crate::notify::notify(&self.settings, "F-List", &text);
         }
@@ -532,6 +536,9 @@ impl App {
     fn rejoin(&mut self) {
         if self.joined_after_login {
             return;
+        }
+        if self.settings.site_poll_minutes > 0 {
+            self.site_poll_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
         }
         self.joined_after_login = true;
         let ids: Vec<String> = self.chat.conversations.iter().filter_map(|c| c.channel_id().map(String::from)).collect();

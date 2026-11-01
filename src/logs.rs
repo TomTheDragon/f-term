@@ -187,6 +187,41 @@ pub fn merge_continuations(lines: Vec<String>) -> Vec<String> {
     out
 }
 
+/// One search hit in the logs.
+#[derive(Debug, Clone, Default)]
+pub struct Hit {
+    pub conv_key: String,
+    pub title: String,
+    pub day: String,
+    pub line: String,
+}
+
+/// Search every log of `me` for `query` (case-insensitive), newest days first.
+pub fn search(me: &str, query: &str, limit: usize) -> Vec<Hit> {
+    let q = query.to_lowercase();
+    let mut files: Vec<(String, String, String)> = Vec::new();
+    for (key, title) in conversations(me) {
+        for day in days(me, &key) {
+            files.push((day, key.clone(), title.clone()));
+        }
+    }
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut out = Vec::new();
+    for (day, key, title) in files {
+        let mut lines = merge_continuations(read_day(me, &key, &day));
+        lines.reverse();
+        for line in lines {
+            if line.to_lowercase().contains(&q) {
+                out.push(Hit { conv_key: key.clone(), title: title.clone(), day: day.clone(), line });
+                if out.len() >= limit {
+                    return out;
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Plain text log of the last messages of a conversation, for reports.
 pub fn report_log(messages: &[Message]) -> String {
     messages.iter().map(format_line).collect::<Vec<_>>().join("\n")
