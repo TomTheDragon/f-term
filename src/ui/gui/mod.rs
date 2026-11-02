@@ -629,7 +629,8 @@ pub(super) fn draw_shape(shape: Shape, fg: u32, bg: u32, r: PxRect, fill: &mut d
         Shape::Braille(bits) => {
             // 2 columns x 4 rows of square dots.
             const BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
-            let d = (w / 4).min(h / 8).max(1);
+            // Dots fill about 3/4 of their 2x4 grid square, like Braille fonts.
+            let d = ((w / 2).min(h / 4) * 3 / 4).max(1);
             for (row, rb) in BITS.iter().enumerate() {
                 for (col, b) in rb.iter().enumerate() {
                     if bits & b != 0 {

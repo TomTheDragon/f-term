@@ -27,8 +27,14 @@ have them).
 | Profile images (GUI, original size) | Profile images in a terminal |
 | ![Kinks tab: ✓ liked by both, ✗ conflicts](docs/screenshots/profile-kinks.png) | ![F-List notes](docs/screenshots/notes.png) |
 | Kinks tab: ✓ liked by both, ✗ conflicts | F-List notes (Alt+N) |
-| ![Site messages: character updates](docs/screenshots/site-messages.png) | ![Login](docs/screenshots/login.png) |
-| Site messages with character updates (Alt+M) | Login |
+| ![Site messages: character updates](docs/screenshots/site-messages.png) | ![Friends with details](docs/screenshots/friends.png) |
+| Site messages with character updates (Alt+M) | Friends per character, with details (F3) |
+| ![Browse New](docs/screenshots/browse.png) | ![Groups](docs/screenshots/groups.png) |
+| New and updated characters (Alt+U) | F-List groups (Alt+G) |
+| ![A group thread](docs/screenshots/group-thread.png) | ![Braille images](docs/screenshots/profile-braille.png) |
+| Reading a group thread | A profile with Braille images (`/images braille`) |
+| ![Find in a window](docs/screenshots/find.png) | ![Login](docs/screenshots/login.png) |
+| Ctrl+F in any window, here the help | Login |
 
 The screenshots show made-up characters and pictures. They are drawn by the
 GUI version's renderer (the terminal ones with the terminal look) and can be

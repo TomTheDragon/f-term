@@ -1128,7 +1128,12 @@ fn screenshots() {
         let frames = crate::images::Frames { frames: vec![(Arc::new(p), 0)], total_ms: 0 };
         app.images.finish(crate::images::Loaded { url, result: Ok(Arc::new(frames)) });
     };
-    let palettes: [(&str, [u8; 3], [u8; 3], [u8; 3]); 9] = [
+    let palettes: [(&str, [u8; 3], [u8; 3], [u8; 3]); 14] = [
+        ("Juniper Hale", [70, 30, 30], [240, 110, 80], [240, 205, 180]),
+        ("Rook Calder", [25, 25, 45], [110, 120, 220], [180, 130, 100]),
+        ("Saffi Brightwater", [20, 70, 90], [120, 220, 230], [245, 215, 190]),
+        ("Thorne Ashby", [45, 35, 20], [200, 160, 90], [215, 170, 130]),
+        ("Alt Char", [40, 40, 70], [200, 200, 120], [230, 190, 160]),
         ("Vela Starling", [40, 60, 140], [230, 120, 170], [250, 220, 200]),
         ("Orrin Vale", [20, 70, 60], [90, 200, 160], [210, 170, 140]),
         ("Kestrel Moss", [90, 50, 20], [240, 170, 60], [160, 110, 80]),
@@ -1255,7 +1260,7 @@ fn screenshots() {
         (14, "no"),
         (15, "no"),
     ]);
-    let vela = Ok(json!({
+    let vela_data = json!({
             "id": 5, "name": "Vela Starling", "custom_title": "Starship Navigator", "views": 1234,
             "created_at": 1600000000, "updated_at": 1760000000,
             "description": "[center][b][color=cyan]Vela Starling[/color][/b]\n[i]Navigator of the survey ship Long Horizon[/i][/center]\n\n\
@@ -1267,12 +1272,15 @@ fn screenshots() {
             "infotags": {"1": "27", "2": "Human", "3": "9", "4": "1.68 m", "5": "10", "6": "11"},
             "images": [{"image_id": "101", "extension": "png", "description": "The Long Horizon", "sort_order": 1}],
             "badges": [], "error": ""
-    }));
+    });
     if let Some(super::dialogs::Dialog::Profile(p)) = app.dialogs.last_mut() {
-        p.set_data(vela);
+        p.set_data(Ok(vela_data.clone()));
     }
     shot(&mut app, "profile.png", 120, 34, true);
     shot(&mut app, "profile-blocks.png", 120, 34, false);
+    app.settings.image_mode = crate::config::ImageMode::Braille;
+    shot(&mut app, "profile-braille.png", 120, 34, false);
+    app.settings.image_mode = crate::config::ImageMode::Blocks;
     key(&mut app, KeyCode::Char('3'));
     shot(&mut app, "profile-kinks.png", 120, 34, false);
     key(&mut app, KeyCode::Char('4'));
@@ -1349,6 +1357,155 @@ fn screenshots() {
     }
     app.site_counters.messages = 3;
     shot(&mut app, "site-messages.png", 120, 30, false);
+    app.dialogs.clear();
+
+    // Friends: a section per own character, details of the selected one.
+    let lists = crate::api::FriendLists {
+        bookmarks: vec!["Orrin Vale".into(), "Vela Starling".into()],
+        friends: [
+            ("Vela Starling", "Tester"),
+            ("Quill", "Tester"),
+            ("Mira Solace", "Tester"),
+            ("Kestrel Moss", "Alt Char"),
+            ("Ash Wren", "Alt Char"),
+            ("Thorne Ashby", "Alt Char"),
+        ]
+        .iter()
+        .map(|(t, m)| (t.to_string(), m.to_string(), 0))
+        .collect(),
+        incoming: Vec::new(),
+        pending: Vec::new(),
+    };
+    app.chat.friends.extend(["mira solace".to_string()]);
+    app.char_cards.insert("vela starling".into(), Some(Ok(Arc::new(vela_data))));
+    pump_until(&mut app, "mapping", |a| a.mapping.is_some());
+    app.dialogs.push(super::dialogs::Dialog::Friends(super::dialogs::FriendsState { tab: 0, sel: 3, data: Some(Ok(lists)) }));
+    shot(&mut app, "friends.png", 120, 30, true);
+    app.dialogs.clear();
+
+    // Browse New.
+    let character = |name: &str, info: &[(&str, &str)]| crate::site::BrowseCharacter {
+        name: name.into(),
+        info: info.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+    };
+    let page = crate::site::BrowsePage {
+        characters: vec![
+            character(
+                "Juniper Hale",
+                &[
+                    ("Age", "31"),
+                    ("Gender", "Female"),
+                    ("Orientation", "Bisexual"),
+                    ("Species", "Red fox"),
+                    ("Position", "Switch"),
+                    ("Build", "Athletic"),
+                    ("Posts", "Paragraph; 7-10 lines."),
+                ],
+            ),
+            character("Rook Calder", &[("Gender", "Male"), ("Species", "Raven"), ("Posts", "Multiple paragraphs")]),
+            character("Saffi Brightwater", &[("Age", "24"), ("Gender", "Female"), ("Species", "Otter")]),
+            character("Thorne Ashby", &[("Gender", "Male"), ("Species", "Dragon")]),
+            character("Brannoc Ironleaf", &[("Gender", "Male"), ("Species", "Dwarf")]),
+            character("Ash Wren", &[("Gender", "Male-Herm"), ("Species", "Wren")]),
+            character("Kestrel Moss", &[("Gender", "Transgender"), ("Species", "Human")]),
+        ],
+        offset: 0,
+        next: Some(20),
+    };
+    app.dialogs.push(super::dialogs::Dialog::Browse(Box::new(super::groups::BrowseState {
+        newest: false,
+        offset: 0,
+        data: Some(Ok(page)),
+        sel: 0,
+    })));
+    shot(&mut app, "browse.png", 120, 30, true);
+    app.dialogs.clear();
+
+    // Groups: the list and a thread.
+    let group = |slug: &str, name: &str, desc: &str, owner: &str, posts, members, last: &str, joined| crate::site::GroupSummary {
+        slug: slug.into(),
+        name: name.into(),
+        description: desc.into(),
+        owner: owner.into(),
+        posts,
+        members,
+        last_post: last.into(),
+        joined,
+    };
+    let groups = vec![
+        group(
+            "writers guild",
+            "Writers Guild",
+            "For [b]writers[/b] and readers of long-form roleplay. Prompts, critique and \
+            a monthly story challenge.",
+            "Kestrel Moss",
+            1820,
+            412,
+            "2h ago",
+            true,
+        ),
+        group("starport", "Starport Nine", "Sci-fi roleplay on a busy space station.", "Orrin Vale", 960, 233, "1d ago", true),
+        group("f-list", "F-List", "The official group for F-List related discussion.", "Staff", 16175, 7276, "1d, 18h ago", false),
+        group("fantasy taverns", "Fantasy Taverns", "Meet, drink and find adventurers.", "Brannoc Ironleaf", 5230, 1980, "3h ago", false),
+        group("night owls", "Night Owls", "Late-night chats and scenes.", "Ash Wren", 410, 95, "5d ago", false),
+        group("worldbuilders", "Worldbuilders", "Maps, magic systems and settings.", "Mira Solace", 2780, 640, "12h ago", false),
+    ];
+    let mut gs = super::groups::GroupsState { list: Some(Ok(groups)), ..Default::default() };
+    app.dialogs.push(super::dialogs::Dialog::Groups(Box::default()));
+    if let Some(super::dialogs::Dialog::Groups(g)) = app.dialogs.last_mut() {
+        std::mem::swap(g.as_mut(), &mut gs);
+    }
+    shot(&mut app, "groups.png", 120, 30, false);
+    let post = |id, author: &str, posted: &str, body: &str| crate::site::ForumPost {
+        id,
+        author: author.into(),
+        posted: posted.into(),
+        body: body.into(),
+    };
+    let thread = crate::site::ThreadPage {
+        id: 900,
+        subject: "October prompt: The Lighthouse".into(),
+        group_id: 300,
+        group_slug: "writers guild".into(),
+        group_name: "Writers Guild".into(),
+        forum_id: 55,
+        forum_name: "Story prompts".into(),
+        posts: vec![
+            post(
+                1,
+                "Kestrel Moss",
+                "1w ago",
+                "This month's prompt: a [i]lighthouse[/i] on a rock far from any shore. Its keeper hasn't been seen \
+                 in years, but the light still turns every night.\n\n[b]Rules:[/b] one scene, up to 2,000 words, any genre.",
+            ),
+            post(2, "Mira Solace", "6d ago", "Ooh. What if the light is keeping something [i]in[/i] rather than warning ships away?"),
+            post(
+                3,
+                "Vela Starling",
+                "2d ago",
+                "Count me in! Mine will be set in space: a beacon at the edge of a nebula. [eicon]star[/eicon]",
+            ),
+            post(4, "Orrin Vale", "5h ago", "Posted my draft in the critique forum. Be gentle. 😄"),
+        ],
+        pages: vec![0, 25],
+        offset: 0,
+        can_reply: true,
+    };
+    if let Some(super::dialogs::Dialog::Groups(g)) = app.dialogs.last_mut() {
+        g.group = Some(None);
+        g.forum = Some(None);
+        g.thread = Some(Some(Ok(thread)));
+        g.thread_id = 900;
+    }
+    shot(&mut app, "group-thread.png", 120, 30, false);
+    app.dialogs.clear();
+
+    // Ctrl+F in a window: the help, with the matches marked.
+    app.dialogs.push(super::dialogs::Dialog::help());
+    shot(&mut app, "find.png", 120, 30, false);
+    app.dialog_find_start("eicon");
+    shot(&mut app, "find.png", 120, 30, false);
+    app.dialogs.clear();
     let _ = std::fs::remove_dir_all(dir);
 }
 
