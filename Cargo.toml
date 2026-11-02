@@ -1,6 +1,6 @@
 [package]
 name = "f-term"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 # Rust 1.77 is the last release that officially targets Windows 7, so every
 # dependency has to stay compatible with it (see .cargo/config.toml).

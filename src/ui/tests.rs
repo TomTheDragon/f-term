@@ -181,8 +181,9 @@ fn handle_http(s: TcpStream) {
                         json!({"error": "Login failed."})
                     } else {
                         json!({"ticket": "tkt", "characters": {"Tester": 1, "Alt Char": 2}, "default_character": 1,
-                               "friends": [{"dest_name": "Tester", "source_name": "Friendo"}, {"dest_name": "Alt Char", "source_name": "Pal"}],
-                               "bookmarks": [{"name": "Booky"}, {"name": "Friendo"}], "error": ""})
+                               "friends": [{"dest_name": "Tester", "source_name": "Friendo"}, {"dest_name": "Alt Char", "source_name": "Pal"},
+                                           {"dest_name": "Buddy", "source_name": "Tester"}, {"dest_name": "Alt Char", "source_name": "Altpal"}],
+                               "bookmarks": [{"name": "Booky"}, {"name": "Friendo"}, {"name": "Buddy"}, {"name": "Altpal"}], "error": ""})
                     }
                 }
                 "/json/api/mapping-list.php" => json!({
@@ -197,7 +198,8 @@ fn handle_http(s: TcpStream) {
                     "created_at": 1600000000, "updated_at": 1700000000, "badges": [],
                     "kinks": {"1": "fave"}, "custom_kinks": {}, "infotags": {"3": "9"}, "images": [], "error": ""}),
                 "/json/api/friend-bookmark-lists.php" => {
-                    json!({"bookmarklist": ["Booky", "Friendo"], "friendlist": [{"source": "Tester", "dest": "Friendo", "last_online": 0},
+                    json!({"bookmarklist": ["Booky", "Friendo", "Buddy", "Altpal"], "friendlist": [{"source": "Tester", "dest": "Friendo", "last_online": 0},
+                        {"source": "Buddy", "dest": "Tester", "last_online": 0}, {"source": "Alt Char", "dest": "Altpal", "last_online": 0},
                         {"source": "Alt Char", "dest": "Pal", "last_online": 0}],
                     "requestlist": [{"id": "77", "source": "Stranger", "dest": "Tester"}], "requestpending": [], "error": ""})
                 }
@@ -243,7 +245,7 @@ fn ws_server(log: Log) -> u16 {
                             send(&mut ws, r#"VAR {"variable":"msg_flood","value":0.1}"#.into());
                             send(&mut ws, r#"ADL {"ops":["Admin"]}"#.into());
                             send(&mut ws, r#"CON {"count":3}"#.into());
-                            send(&mut ws, r#"LIS {"characters":[["Friendo","Female","looking","Up for RP"],["Booky","Male","online",""]]}"#.into());
+                            send(&mut ws, r#"LIS {"characters":[["Friendo","Female","looking","Up for RP"],["Booky","Male","online",""],["Altpal","Male","online",""]]}"#.into());
                             send(&mut ws, r#"IGN {"action":"init","characters":["Pest"]}"#.into());
                             send(&mut ws, r#"NLN {"identity":"Tester","gender":"Herm","status":"online"}"#.into());
                         }
@@ -393,14 +395,24 @@ fn end_to_end() {
     pump_until(&mut app, "online", |a| a.conn_state == ConnState::Online);
     assert_eq!(app.chat.me, "Tester");
     assert!(app.chat.is_friend("Friendo"));
+    // A friendship you asked for comes the other way round in the login
+    // data; also bookmarked, it is still a friend.
+    assert!(app.chat.is_friend("Buddy") && app.chat.is_bookmarked("Buddy"));
     assert!(app.chat.is_ignored("pest"));
 
     // Online friends and bookmarks in the console tab, with their status.
     let s = screen(&mut app, 120, 30);
     show(&s);
-    assert!(s.contains("Online (2)") && s.contains("Friendo") && s.contains("Looking") && s.contains("Booky"), "{s}");
+    assert!(s.contains("Online (3)") && s.contains("Friendo") && s.contains("Looking") && s.contains("Booky"), "{s}");
+    // Friends (also of your other characters) show as friends even when bookmarked.
+    assert!(s.contains("♥ Friendo") && s.contains("♥ Altpal") && s.contains("★ Booky"), "{s}");
+    // The friend lists loaded after login keep them.
+    pump(&mut app, 300);
+    assert!(app.chat.is_friend("Buddy") && app.chat.is_any_friend("Altpal") && !app.chat.is_friend("Altpal"), "after the friend lists");
+    let s = screen(&mut app, 120, 30);
+    assert!(s.contains("♥ Friendo") && s.contains("♥ Altpal"), "{s}");
     // The header doesn't repeat the count while the panel is shown.
-    assert!(s.contains("3 users online") && !s.contains("bookmarks/friends online"), "{s}");
+    assert!(s.contains("4 users online") && !s.contains("bookmarks/friends online"), "{s}");
     show(&screen(&mut app, 80, 25));
 
     // Mouse support (off by default): clicking a key hint presses the key,
@@ -558,15 +570,15 @@ fn end_to_end() {
     let s = screen(&mut app, 120, 30);
     show(&s);
     let line = |s: &str, what: &str| s.lines().position(|l| l.contains(what)).unwrap_or_else(|| panic!("{what} missing: {s}"));
-    assert!(line(&s, "Tester · 1 friend") < line(&s, "Friendo  Up for RP"), "{s}");
-    assert!(line(&s, "Friendo  Up for RP") < line(&s, "Alt Char · 1 friend") && line(&s, "Alt Char · 1") < line(&s, "  Pal"), "{s}");
+    assert!(line(&s, "Tester · 2 friends") < line(&s, "Friendo  Up for RP"), "{s}");
+    assert!(line(&s, "Friendo  Up for RP") < line(&s, "Alt Char · 2 friends") && line(&s, "Alt Char · 2") < line(&s, "  Pal"), "{s}");
     assert!(!s.contains("friend of"), "{s}");
     // The refreshed lists keep Friendo a friend, though also bookmarked.
     assert!(app.chat.is_friend("Friendo") && app.chat.is_bookmarked("Friendo") && !app.chat.is_friend("Pal"));
     // Details of the selected entry: your own character first, then a friend.
     pump(&mut app, 300);
     let s = screen(&mut app, 120, 30);
-    assert!(s.contains("Your character · 1 friend"), "{s}");
+    assert!(s.contains("Your character · 2 friends"), "{s}");
     key(&mut app, KeyCode::Down);
     screen(&mut app, 120, 30);
     pump_until(&mut app, "card", |a| matches!(a.char_cards.get("friendo"), Some(Some(_))) && a.mapping.is_some());

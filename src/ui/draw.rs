@@ -192,7 +192,7 @@ impl App {
             .chain(self.chat.bookmarks.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
-            .filter_map(|n| self.chat.characters.get(n).map(|c| (c.name.clone(), c.status, self.chat.is_friend(n))))
+            .filter_map(|n| self.chat.characters.get(n).map(|c| (c.name.clone(), c.status, self.chat.is_any_friend(n))))
             .collect();
         list.sort_by_key(|(n, _, _)| n.to_lowercase());
         list
@@ -209,7 +209,7 @@ impl App {
             .iter()
             .map(|(name, online, _)| {
                 let st = if *online { self.chat.status_of(name) } else { Status::Offline };
-                let (mark, mark_color) = if self.chat.is_friend(name) { ("♥", Color::LightRed) } else { ("★", Color::Yellow) };
+                let (mark, mark_color) = if self.chat.is_any_friend(name) { ("♥", Color::LightRed) } else { ("★", Color::Yellow) };
                 Line::from(vec![
                     Span::styled(format!("{} ", st.symbol()), Style::default().fg(st.color())),
                     Span::styled(format!("{mark} "), Style::default().fg(mark_color)),
@@ -290,7 +290,7 @@ impl App {
                 ("@", Color::LightGreen)
             } else if self.chat.is_chatop(name) {
                 ("&", Color::LightMagenta)
-            } else if self.chat.is_friend(name) {
+            } else if self.chat.is_any_friend(name) {
                 ("♥", Color::LightRed)
             } else if self.chat.is_bookmarked(name) {
                 ("★", Color::Yellow)
@@ -377,7 +377,7 @@ impl App {
                     Typing::Paused => l1.push(Span::styled("  has entered text", Style::default().fg(Color::DarkGray))),
                     Typing::Clear => {}
                 }
-                if self.chat.is_friend(name) {
+                if self.chat.is_any_friend(name) {
                     l1.push(Span::styled("  ♥ friend", Style::default().fg(Color::LightRed)));
                 } else if self.chat.is_bookmarked(name) {
                     l1.push(Span::styled("  ★ bookmark", Style::default().fg(Color::Yellow)));

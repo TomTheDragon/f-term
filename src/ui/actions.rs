@@ -1157,11 +1157,15 @@ impl App {
                 Ok(m) => self.mapping = Some(std::sync::Arc::new(m)),
                 Err(e) => self.flash(&format!("Could not load kink/info lists: {e}")),
             },
-            ApiReply::FriendLists(r) => {
-                if let Ok(l) = &r {
-                    let me = self.chat.me.to_lowercase();
+            ApiReply::FriendLists(mut r) => {
+                if let Ok(l) = &mut r {
+                    // Put your character second, whichever side the website has it on.
+                    let mine = self.login_info.as_ref().map(|i| i.characters.clone()).unwrap_or_else(|| vec![self.chat.me.clone()]);
+                    let oriented = crate::api::orient_friends(l.friends.iter().map(|f| (f.0.as_str(), f.1.as_str())), &mine);
+                    l.friends = oriented.into_iter().map(|(t, m)| (t, m, 0)).collect();
                     self.chat.bookmarks = l.bookmarks.iter().map(|b| b.to_lowercase()).collect();
-                    self.chat.friends = l.friends.iter().filter(|f| f.1.to_lowercase() == me).map(|f| f.0.to_lowercase()).collect();
+                    let pairs: Vec<(String, String)> = l.friends.iter().map(|f| (f.0.clone(), f.1.clone())).collect();
+                    self.set_friends(&pairs);
                 }
                 for d in self.dialogs.iter_mut() {
                     if let Dialog::Friends(f) = d {

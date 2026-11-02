@@ -967,7 +967,7 @@ impl App {
                 .bookmarks
                 .iter()
                 .map(|b| {
-                    let note = if self.chat.is_friend(b) { "★ Bookmarked · ♥ friend" } else { "★ Bookmarked" };
+                    let note = if self.chat.is_any_friend(b) { "★ Bookmarked · ♥ friend" } else { "★ Bookmarked" };
                     (self.chat.is_online(b), b.to_lowercase(), row(Action::Profile(b.clone()), person(b, String::new()), b, note.into()))
                 })
                 .collect(),

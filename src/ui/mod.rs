@@ -574,12 +574,13 @@ impl App {
             self.my_status = Status::Online;
         }
         self.my_status_msg = self.char_state.last_status_message.clone();
+        let friends = self
+            .login_info
+            .as_ref()
+            .map(|info| crate::api::orient_friends(info.friends.iter().map(|(a, b)| (a.as_str(), b.as_str())), &info.characters))
+            .unwrap_or_default();
+        self.set_friends(&friends);
         if let Some(info) = &self.login_info {
-            for (mine, theirs) in &info.friends {
-                if mine.eq_ignore_ascii_case(character) {
-                    self.chat.friends.insert(theirs.to_lowercase());
-                }
-            }
             for b in &info.bookmarks {
                 self.chat.bookmarks.insert(b.to_lowercase());
             }
@@ -606,6 +607,8 @@ impl App {
         }
         self.chat.active = 0;
         self.connect();
+        // The full friend and bookmark lists, to be sure who is a friend.
+        self.api_call(|api| ApiReply::FriendLists(api.friend_lists()));
     }
 
     pub fn connect(&mut self) {
@@ -802,6 +805,20 @@ impl App {
         }
     }
 
+    /// Friends from (their character, your character) pairs: of the current
+    /// character, and of your other characters.
+    pub fn set_friends(&mut self, friends: &[(String, String)]) {
+        self.chat.friends.clear();
+        self.chat.other_friends.clear();
+        for (theirs, mine) in friends {
+            if mine.eq_ignore_ascii_case(&self.character) {
+                self.chat.friends.insert(theirs.to_lowercase());
+            } else {
+                self.chat.other_friends.insert(theirs.to_lowercase());
+            }
+        }
+    }
+
     pub fn open_private(&mut self, name: &str, focus: bool) -> usize {
         let display = self.chat.character(name).map(|c| c.name.clone()).unwrap_or_else(|| name.to_string());
         let existed = self.chat.find_private(&display).is_some();
@@ -820,7 +837,7 @@ impl App {
 
     /// Note a friend/bookmark coming online or going offline, if wanted.
     pub(super) fn watch_toast(&mut self, name: &str, online: bool) {
-        if !self.settings.notify_online.wants(self.chat.is_friend(name), self.chat.is_bookmarked(name)) {
+        if !self.settings.notify_online.wants(self.chat.is_any_friend(name), self.chat.is_bookmarked(name)) {
             return;
         }
         self.toasts.retain(|(n, _, _)| !n.eq_ignore_ascii_case(name));

@@ -304,6 +304,8 @@ pub struct Chat {
     pub conversations: Vec<Conversation>,
     pub active: usize,
     pub friends: BTreeSet<String>,
+    /// Friends of your other characters (bookmarks are for the whole account).
+    pub other_friends: BTreeSet<String>,
     pub bookmarks: BTreeSet<String>,
     pub ignored: BTreeSet<String>,
     pub chatops: HashSet<String>,
@@ -348,6 +350,12 @@ impl Chat {
 
     pub fn is_friend(&self, name: &str) -> bool {
         self.friends.contains(&name.to_lowercase())
+    }
+
+    /// A friend of this or one of your other characters.
+    pub fn is_any_friend(&self, name: &str) -> bool {
+        let n = name.to_lowercase();
+        self.friends.contains(&n) || self.other_friends.contains(&n)
     }
 
     pub fn is_bookmarked(&self, name: &str) -> bool {

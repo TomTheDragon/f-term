@@ -549,9 +549,13 @@ pub fn render_blocks(p: &Pixels, max_cols: u16, max_rows: u16, truecolor: bool) 
             let bot = img.get(x, row * 2 + 1);
             let (t, b) = (top[3] >= 128, bot[3] >= 128);
             let span = match (t, b) {
+                // The lower half block with the upper pixel as the background:
+                // terminals with extra line spacing (cool-retro-term) fill the
+                // gap above each character with its background colour, so the
+                // gap then continues the upper half instead of striping it.
                 (true, true) => Span::styled(
-                    "▀",
-                    Style::default().fg(rgb_color(top[0], top[1], top[2], truecolor)).bg(rgb_color(bot[0], bot[1], bot[2], truecolor)),
+                    "▄",
+                    Style::default().fg(rgb_color(bot[0], bot[1], bot[2], truecolor)).bg(rgb_color(top[0], top[1], top[2], truecolor)),
                 ),
                 (true, false) => Span::styled("▀", Style::default().fg(rgb_color(top[0], top[1], top[2], truecolor))),
                 (false, true) => Span::styled("▄", Style::default().fg(rgb_color(bot[0], bot[1], bot[2], truecolor))),
@@ -934,6 +938,12 @@ mod tests {
         assert_eq!(window_pixels(ImageMode::Native, None), None);
         let p = checker();
         assert_eq!(render_blocks(&p, 8, 4, true).len(), 4);
+        // Two colours in a cell: lower half block, the upper colour as background.
+        let two = Pixels { width: 1, height: 2, rgba: vec![255, 0, 0, 255, 0, 0, 255, 255] };
+        let l = render_blocks(&two, 1, 1, true);
+        let s = &l[0].spans[0];
+        assert_eq!(s.content, "▄");
+        assert_eq!((s.style.fg, s.style.bg), (Some(Color::Rgb(0, 0, 255)), Some(Color::Rgb(255, 0, 0))));
         assert_eq!(render_ascii(&p, 8, 4, false, true).len(), 4);
         // Braille: 2x4 dots per character; a white square lights all dots,
         // a transparent one none.

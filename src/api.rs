@@ -16,6 +16,8 @@ pub struct LoginInfo {
     pub characters: Vec<String>,
     pub default_character: String,
     /// (my character, their character)
+    /// Friendships as (dest_name, source_name): who accepted and who sent
+    /// the request, so your character may be either one.
     pub friends: Vec<(String, String)>,
     pub bookmarks: Vec<String>,
 }
@@ -287,6 +289,22 @@ impl Api {
         let text = self.agent.get(&url).call().map_err(err_text)?.into_string().map_err(|e| e.to_string())?;
         serde_json::from_str(&text).map_err(|e| e.to_string())
     }
+}
+
+/// Friendships as (their character, your character). The website lists them
+/// in either order, so the side that is one of `mine` is yours.
+pub fn orient_friends<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>, mine: &[String]) -> Vec<(String, String)> {
+    let is_mine = |n: &str| mine.iter().any(|m| m.eq_ignore_ascii_case(n));
+    let mut out = Vec::new();
+    for (a, b) in pairs {
+        if is_mine(b) {
+            out.push((a.to_string(), b.to_string()));
+        }
+        if is_mine(a) && !a.eq_ignore_ascii_case(b) {
+            out.push((b.to_string(), a.to_string()));
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Default)]
