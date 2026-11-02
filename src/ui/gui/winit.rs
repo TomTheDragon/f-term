@@ -345,7 +345,7 @@ impl ApplicationHandler<UserEvent> for Handler {
         // Size the window for the wanted grid at a scale of 1; the system scales it.
         let base = Renderer::new(self.config.font_size as f32);
         let size = LogicalSize::new(self.config.cols as f64 * base.cell_w as f64, self.config.rows as f64 * base.cell_h as f64);
-        let attrs = Window::default_attributes().with_title("F-Term").with_inner_size(size);
+        let attrs = Window::default_attributes().with_title(format!("F-Term {}", crate::protocol::CLIENT_VERSION)).with_inner_size(size);
         // The app id (Wayland) / WM_CLASS (X11) links the window to its desktop file,
         // so the desktop shows the right name and icon for it.
         #[cfg(all(unix, not(target_os = "macos")))]

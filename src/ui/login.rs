@@ -257,7 +257,7 @@ impl App {
             }
         }
         let title = match l.stage {
-            Stage::Credentials => "F-Chat login".to_string(),
+            Stage::Credentials => format!("F-Chat login · F-Term v{}", crate::protocol::CLIENT_VERSION),
             Stage::Character => format!("Choose a character ({})", l.characters.len()),
         };
         let inner = widgets::popup(buf, box_area, &title, ascii);

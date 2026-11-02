@@ -6,6 +6,8 @@ mod console16;
 mod dialogs;
 mod draw;
 mod eicons;
+mod find;
+mod groups;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod input;
@@ -56,10 +58,16 @@ pub enum ApiReply {
     Guestbook(String, u32, Result<Value, String>),
     CharFriends(String, Result<Vec<String>, String>),
     SearchFields(Result<Value, String>),
-    Report { character: String, reason: String, result: Result<i64, String> },
+    Report {
+        character: String,
+        reason: String,
+        result: Result<i64, String>,
+    },
     Done(String, Result<(), String>),
     Site(site::SiteReply),
     Eicons(Result<Arc<crate::eicons::EiconIndex>, String>),
+    /// Profile data for a character's details (friends window).
+    CharCard(String, Result<Value, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +148,8 @@ pub struct App {
     /// Friends/bookmarks that came online or went offline: (name, online, when).
     /// Text of the active in-tab search (Ctrl+F).
     pub find: Option<String>,
+    /// Search in a window (Ctrl+F there): (text, number of windows open then).
+    pub dialog_find: Option<(String, usize)>,
     /// Unread notes and site messages (from the website).
     pub site_counters: crate::site::Counters,
     /// When to check the website counters next.
@@ -150,13 +160,13 @@ pub struct App {
     pub eicon_loading: bool,
     /// Your character's kinks, for the kink match in profiles.
     pub my_kinks: Option<Arc<profile::MyKinks>>,
+    /// Profile data of characters shown with details, by lower-case name (None while loading).
+    pub char_cards: std::collections::HashMap<String, Option<Result<Arc<Value>, String>>>,
     my_kinks_requested: bool,
     pub toasts: Vec<(String, bool, Instant)>,
     pub completion: Option<Completion>,
     pub quit: bool,
-    /// Use the compact layout on screens up to 80 columns (Windows 9x console).
-    pub narrow_console: bool,
-    /// The compact layout is in use for the current frame.
+    /// The compact layout (screens up to 80 columns) is in use for the current frame.
     compact: bool,
     pub reconnect_at: Option<Instant>,
     pub reconnect_attempts: u32,
@@ -214,16 +224,17 @@ impl App {
             friends_panel_shown: false,
             toasts: Vec::new(),
             find: None,
+            dialog_find: None,
             site_counters: Default::default(),
             site_poll_at: None,
             site_error_shown: false,
             eicon_index: None,
             eicon_loading: false,
             my_kinks: None,
+            char_cards: Default::default(),
             my_kinks_requested: false,
             completion: None,
             quit: false,
-            narrow_console: cfg!(feature = "narrow-console"),
             compact: false,
             reconnect_at: None,
             reconnect_attempts: 0,
@@ -348,7 +359,7 @@ impl App {
                 self.dirty = false;
                 if self.images.end_frame() || self.full_redraw {
                     self.full_redraw = false;
-                    if self.settings.image_mode == ImageMode::Native {
+                    if self.settings.active_image_mode() == ImageMode::Native {
                         // Remove kitty image placements; other terminals ignore this.
                         let _ = write!(std::io::stdout(), "\x1b_Ga=d,d=A,q=2\x1b\\");
                     }
@@ -437,7 +448,7 @@ impl App {
             AppEvent::Api(r) => self.on_api(r),
             AppEvent::Image(l) => {
                 self.images.finish(l);
-                self.full_redraw |= self.settings.image_mode == ImageMode::Native;
+                self.full_redraw |= self.settings.active_image_mode() == ImageMode::Native;
             }
         }
     }
@@ -870,7 +881,7 @@ impl App {
         self.input.set(&d);
         self.completion = None;
         self.user_sel = 0;
-        if self.settings.image_mode == ImageMode::Native {
+        if self.settings.active_image_mode() == ImageMode::Native {
             self.full_redraw = true;
         }
     }
@@ -979,7 +990,7 @@ impl App {
     }
 
     pub fn request_image(&mut self, url: &str) {
-        if self.settings.image_mode != ImageMode::Off {
+        if self.settings.active_image_mode() != ImageMode::Off {
             self.images.request(url, &self.tx, AppEvent::Image);
         }
     }
@@ -1002,7 +1013,27 @@ impl App {
             }
             return;
         }
+        // Help and settings open over anything (also the login screen).
+        if matches!(key.code, KeyCode::F(1) | KeyCode::F(6)) && key.modifiers.is_empty() {
+            let help = key.code == KeyCode::F(1);
+            match self.dialogs.last() {
+                Some(Dialog::Help { .. }) if help => {
+                    self.dialogs.pop();
+                }
+                Some(Dialog::Settings(_)) if !help => {
+                    self.dialogs.pop();
+                }
+                _ => {
+                    self.dialogs.retain(|d| if help { !matches!(d, Dialog::Help { .. }) } else { !matches!(d, Dialog::Settings(_)) });
+                    self.dialogs.push(if help { Dialog::help() } else { Dialog::Settings(Default::default()) });
+                }
+            }
+            return;
+        }
         if !self.dialogs.is_empty() {
+            if self.dialog_find_key(key) {
+                return;
+            }
             self.dialog_key(key);
             return;
         }
@@ -1072,6 +1103,8 @@ impl App {
             KeyCode::Char('n') if alt => return self.run_command("/notes"),
             KeyCode::Char('e') if alt => return self.open_eicon_picker(""),
             KeyCode::Char('m') if alt => return self.run_command("/messages"),
+            KeyCode::Char('u') if alt => return self.run_command("/browse"),
+            KeyCode::Char('g') if alt => return self.run_command("/groups"),
             KeyCode::Char('j') if alt => return self.prompt("Join channel (name or ADH- id)", "", actions::PromptKind::Join, false),
             KeyCode::Char('p') if alt => return self.prompt("Open private chat with", "", actions::PromptKind::PrivateChat, false),
             KeyCode::Char('w') if alt => {

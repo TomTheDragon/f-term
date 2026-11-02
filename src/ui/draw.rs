@@ -15,6 +15,9 @@ use crate::config::ImageMode;
 use crate::state::{gender_color, ConvKind, Message, MsgKind, Status, Typing};
 use crate::timeutil;
 
+/// Screens up to this wide use the compact layout.
+pub const COMPACT_MAX_WIDTH: u16 = 80;
+
 /// A rendered row in the message view.
 enum Row {
     Text(Line<'static>),
@@ -43,7 +46,14 @@ impl App {
         }
         let n = self.dialogs.len();
         for i in 0..n {
+            if i + 1 == n {
+                widgets::clear_find_rows();
+            }
             self.draw_dialog(f.buffer_mut(), area, i, i + 1 == n);
+        }
+        // Matches of the search in the top window (Ctrl+F).
+        if let Some(q) = self.dialog_find_query() {
+            widgets::highlight(f.buffer_mut(), self.hit.dialog, &q);
         }
     }
 
@@ -57,11 +67,11 @@ impl App {
     }
 
     fn draw_chat(&mut self, f: &mut Frame, area: Rect) {
-        // On consoles that can't be wider than 80 columns, save space on
-        // borders so more of the width goes to messages.
-        self.compact = self.narrow_console && area.width <= 80;
+        // On screens of 80 columns or less (like the Windows 9x console),
+        // save space on borders so more of the width goes to messages.
+        self.compact = area.width <= COMPACT_MAX_WIDTH;
         let input_lines = {
-            let w = area.width.saturating_sub(if self.narrow_console && area.width <= 80 { 0 } else { 2 }).max(10);
+            let w = area.width.saturating_sub(if self.compact { 0 } else { 2 }).max(10);
             let (lines, _) = self.input.layout(w);
             lines.len().clamp(1, 6) as u16
         };
@@ -317,6 +327,7 @@ impl App {
                 };
                 vec![Line::from(vec![
                     Span::styled("Console", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
+                    Span::styled(format!(" · F-Term v{}", crate::protocol::CLIENT_VERSION), Style::default().fg(Color::DarkGray)),
                     Span::styled(text, Style::default().fg(Color::DarkGray)),
                 ])]
             }
@@ -480,7 +491,10 @@ impl App {
         }
         // The GUI window shows real images, so it has its own setting (on by default).
         let inline = if crate::images::pixel_output().is_some() { s.gui_inline_images } else { s.inline_images };
-        if inline && s.image_mode != ImageMode::Off && matches!(m.kind, MsgKind::Chat | MsgKind::Action | MsgKind::Ad | MsgKind::History) {
+        if inline
+            && s.active_image_mode() != ImageMode::Off
+            && matches!(m.kind, MsgKind::Chat | MsgKind::Action | MsgKind::Ad | MsgKind::History)
+        {
             let urls: Vec<String> = bbcode::embeds(&m.text)
                 .into_iter()
                 .map(|e| match e {
@@ -577,7 +591,7 @@ impl App {
                 }
             }
         }
-        let (mode, proto, tc) = (self.settings.image_mode, self.settings.graphics_protocol, self.settings.truecolor);
+        let (mode, proto, tc) = (self.settings.active_image_mode(), self.settings.graphics_protocol, self.settings.truecolor);
         for (rect, urls) in images {
             let mut x = rect.x;
             let size = rect.height * 2;
@@ -665,7 +679,12 @@ impl App {
         if !self.my_status_msg.is_empty() {
             spans.push(Span::styled(format!(" {}", trunc(&bbcode::strip(&self.my_status_msg), 30)), Style::default().fg(Color::DarkGray)));
         }
-        if let Some(q) = &self.find {
+        if let Some(q) = self.dialog_find_query() {
+            spans.push(Span::styled(
+                format!("  find \"{}\": Ctrl+F next · Ctrl+G previous · Esc ends", trunc(&q, 20)),
+                Style::default().fg(Color::LightCyan),
+            ));
+        } else if let Some(q) = &self.find {
             spans.push(Span::styled(
                 format!("  find \"{}\": Ctrl+F older · Ctrl+G newer · Esc ends", trunc(q, 20)),
                 Style::default().fg(Color::LightCyan),

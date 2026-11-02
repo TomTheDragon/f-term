@@ -147,6 +147,9 @@ pub fn wrap_all(lines: &[Line<'static>], width: usize, indent: usize) -> Vec<Lin
 
 /// Draw a selectable list. Returns the scroll offset used.
 pub fn list(buf: &mut Buffer, area: Rect, items: &[Line<'static>], sel: usize, focused: bool) -> usize {
+    if focused {
+        FIND_LIST.with(|f| *f.borrow_mut() = Some((items.iter().map(line_text).collect(), sel.min(items.len().saturating_sub(1)))));
+    }
     if area.height == 0 {
         return 0;
     }
@@ -169,6 +172,77 @@ pub fn list(buf: &mut Buffer, area: Rect, items: &[Line<'static>], sel: usize, f
         buf.set_string(area.right() - 1, area.y + pos.min(h - 1) as u16, "▐", Style::default().fg(Color::DarkGray));
     }
     offset
+}
+
+// ---- searching in dialogs (Ctrl+F) ---------------------------------------------------
+
+thread_local! {
+    /// The focused list of the dialog drawn last: (rows as text, selected row).
+    static FIND_LIST: std::cell::RefCell<Option<(Vec<String>, usize)>> = const { std::cell::RefCell::new(None) };
+    /// The scrolling text of the dialog drawn last: (lines as text, first line shown).
+    static FIND_TEXT: std::cell::RefCell<Option<(Vec<String>, usize)>> = const { std::cell::RefCell::new(None) };
+}
+
+pub fn line_text(l: &Line<'_>) -> String {
+    l.spans.iter().map(|s| s.content.as_ref()).collect()
+}
+
+/// Forget the rows recorded for the last dialog (before drawing the top one).
+pub fn clear_find_rows() {
+    FIND_LIST.with(|f| *f.borrow_mut() = None);
+    FIND_TEXT.with(|f| *f.borrow_mut() = None);
+}
+
+/// Record the lines of a scrolling text view (already wrapped) and its scroll position.
+pub fn note_text(lines: &[Line<'static>], scroll: usize) {
+    FIND_TEXT.with(|f| *f.borrow_mut() = Some((lines.iter().map(line_text).collect(), scroll)));
+}
+
+pub fn find_list() -> Option<(Vec<String>, usize)> {
+    FIND_LIST.with(|f| f.borrow().clone())
+}
+
+pub fn find_text() -> Option<(Vec<String>, usize)> {
+    FIND_TEXT.with(|f| f.borrow().clone())
+}
+
+/// The next row containing `query` (case-insensitive) after `from`, or before
+/// it going back, wrapping around. `include` also tests `from` itself.
+pub fn find_row(rows: &[String], query: &str, from: usize, forward: bool, include: bool) -> Option<usize> {
+    let q = query.to_lowercase();
+    let n = rows.len();
+    if n == 0 || q.is_empty() {
+        return None;
+    }
+    let from = from.min(n - 1);
+    let start = if include { 0 } else { 1 };
+    (start..=n).map(|d| if forward { (from + d) % n } else { (from + n * 2 - d) % n }).find(|&i| rows[i].to_lowercase().contains(&q))
+}
+
+/// Mark every occurrence of `query` (case-insensitive) in `area`.
+pub fn highlight(buf: &mut Buffer, area: Rect, query: &str) {
+    let q: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
+    if q.is_empty() {
+        return;
+    }
+    let area = area.intersection(buf.area);
+    for y in area.top()..area.bottom() {
+        // One char per cell; wide characters' second cells are skipped.
+        let cells: Vec<(u16, char)> = (area.left()..area.right())
+            .filter_map(|x| buf[(x, y)].symbol().chars().next().map(|c| (x, c.to_lowercase().next().unwrap_or(c))))
+            .collect();
+        let mut i = 0;
+        while i + q.len() <= cells.len() {
+            if cells[i..i + q.len()].iter().map(|c| c.1).eq(q.iter().copied()) {
+                for (x, _) in &cells[i..i + q.len()] {
+                    buf[(*x, y)].set_style(Style::default().fg(Color::Black).bg(Color::Yellow));
+                }
+                i += q.len();
+            } else {
+                i += 1;
+            }
+        }
+    }
 }
 
 // ---- clickable key hints ------------------------------------------------------------

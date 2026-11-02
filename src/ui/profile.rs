@@ -86,6 +86,45 @@ impl ProfileState {
 /// Your kinks: kink id -> choice ("fave", "yes", "maybe", "no").
 pub type MyKinks = std::collections::HashMap<String, String>;
 
+/// A profile's info fields by group, in the website's order: (group, [(field, value)]).
+pub fn info_groups(v: &Value, map: &Mapping) -> Vec<(String, Vec<(String, String)>)> {
+    let tags: Vec<(String, String)> = v
+        .get("infotags")
+        .and_then(Value::as_object)
+        .map(|o| {
+            o.iter()
+                .map(|(k, val)| {
+                    (
+                        k.clone(),
+                        match val {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        },
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for (gid, gname) in &map.infotag_groups {
+        let mut rows: Vec<(String, String)> = Vec::new();
+        for (tid, val) in &tags {
+            if let Some((name, typ, _list, group)) = map.infotags.get(tid) {
+                if group != gid {
+                    continue;
+                }
+                let shown = if typ == "list" { map.listitems.get(val).cloned().unwrap_or_else(|| val.clone()) } else { bbcode::strip(val) };
+                rows.push((name.clone(), shown));
+            }
+        }
+        if !rows.is_empty() {
+            rows.sort();
+            out.push((gname.clone(), rows));
+        }
+    }
+    out
+}
+
 pub fn my_kinks_from(v: &Value) -> MyKinks {
     v.get("kinks")
         .and_then(Value::as_object)
@@ -197,38 +236,7 @@ fn overview_lines(v: &Value, map: Option<&Mapping>, status: Option<(String, Stri
         out.push(Line::from(Span::styled("Loading field names…", Style::default().fg(Color::DarkGray))));
         return out;
     };
-    let tags: Vec<(String, String)> = v
-        .get("infotags")
-        .and_then(Value::as_object)
-        .map(|o| {
-            o.iter()
-                .map(|(k, val)| {
-                    (
-                        k.clone(),
-                        match val {
-                            Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        },
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    for (gid, gname) in &map.infotag_groups {
-        let mut rows: Vec<(String, String)> = Vec::new();
-        for (tid, val) in &tags {
-            if let Some((name, typ, _list, group)) = map.infotags.get(tid) {
-                if group != gid {
-                    continue;
-                }
-                let shown = if typ == "list" { map.listitems.get(val).cloned().unwrap_or_else(|| val.clone()) } else { bbcode::strip(val) };
-                rows.push((name.clone(), shown));
-            }
-        }
-        if rows.is_empty() {
-            continue;
-        }
-        rows.sort();
+    for (gname, rows) in info_groups(v, map) {
         out.push(Line::default());
         out.push(Line::from(Span::styled(gname.clone(), head)));
         for (n, val) in rows {
@@ -413,10 +421,10 @@ impl App {
             0 => {
                 let status = self.chat.character(&name).map(|c| (c.status.label().to_string(), c.status_msg.clone()));
                 let mut body_area = body;
-                if self.settings.image_mode != ImageMode::Off && body.width > 50 {
+                if self.settings.active_image_mode() != ImageMode::Off && body.width > 50 {
                     let img_w = 24.min(body.width / 3);
                     let url = crate::images::avatar_url(&name);
-                    let (mode, proto, tc) = (self.settings.image_mode, self.settings.graphics_protocol, self.settings.truecolor);
+                    let (mode, proto, tc) = (self.settings.active_image_mode(), self.settings.graphics_protocol, self.settings.truecolor);
                     self.images.request(&url, &self.tx, super::AppEvent::Image);
                     self.images.draw(buf, Rect::new(body.x, body.y, img_w, (img_w / 2).min(body.height)), &url, mode, proto, tc);
                     body_area = Rect::new(body.x + img_w + 2, body.y, body.width - img_w - 2, body.height);
@@ -450,10 +458,10 @@ impl App {
                 widgets::list(buf, Rect::new(body.x, body.y, list_w, body.height), &items, sel, true);
                 let url = imgs[sel].0.clone();
                 let view = Rect::new(body.x + list_w + 1, body.y, body.width.saturating_sub(list_w + 1), body.height);
-                if self.settings.image_mode == ImageMode::Off {
+                if self.settings.active_image_mode() == ImageMode::Off {
                     buf.set_string(view.x, view.y, "Images are off (/images blocks to enable).", Style::default().fg(Color::DarkGray));
                 } else {
-                    let (mode, proto, tc) = (self.settings.image_mode, self.settings.graphics_protocol, self.settings.truecolor);
+                    let (mode, proto, tc) = (self.settings.active_image_mode(), self.settings.graphics_protocol, self.settings.truecolor);
                     self.images.request(&url, &self.tx, super::AppEvent::Image);
                     self.images.draw(buf, view, &url, mode, proto, tc);
                 }
@@ -612,6 +620,7 @@ impl App {
 fn render_scrolled(buf: &mut Buffer, area: Rect, lines: &[Line<'static>], scroll: usize) {
     let max = lines.len().saturating_sub(area.height as usize);
     let s = scroll.min(max);
+    super::widgets::note_text(lines, s);
     for (i, l) in lines.iter().skip(s).take(area.height as usize).enumerate() {
         buf.set_line(area.x, area.y + i as u16, l, area.width);
     }

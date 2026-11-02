@@ -36,6 +36,14 @@ need zig
 need cargo-zigbuild
 
 PURE_RUST_TLS=(--no-default-features --features tls-rustcrypto,images)
+# The plain Linux builds are kept small: they use the system's CA
+# certificates (and for the window its monospace font) instead of built-in
+# copies, abort on panics (no unwinding tables) and are optimized for size.
+# The packages and the AppImage are made by scripts/package-linux.sh.
+LINUX_SMALL=(--features system-certs)
+linuxbuild() {
+    CARGO_PROFILE_RELEASE_PANIC=abort CARGO_PROFILE_RELEASE_OPT_LEVEL=z zigbuild "$@"
+}
 ok=()
 failed=()
 
@@ -144,10 +152,10 @@ r9xbuild() {
 for t in "${TARGETS[@]}"; do
     case "$t" in
         linux-x86_64)
-            zigbuild "$t" x86_64-unknown-linux-musl "" ;;
+            linuxbuild "$t" x86_64-unknown-linux-musl "" "${LINUX_SMALL[@]}" ;;
         linux-i586)
             # ring needs SSE2, so use the pure-Rust crypto backend.
-            zigbuild "$t" i586-unknown-linux-musl "" "${PURE_RUST_TLS[@]}" ;;
+            linuxbuild "$t" i586-unknown-linux-musl "" "${PURE_RUST_TLS[@]}" "${LINUX_SMALL[@]}" ;;
         macos-arm64)
             MACOSX_DEPLOYMENT_TARGET=11.0 zigbuild "$t" aarch64-apple-darwin "" ;;
         macos-x86_64)
@@ -160,9 +168,9 @@ for t in "${TARGETS[@]}"; do
         linux-x86_64-gui)
             # winit loads the X11/Wayland libraries at run time, so link against
             # glibc (2.17 or newer) instead of static musl.
-            zigbuild "$t" x86_64-unknown-linux-gnu.2.17 "" --features gui ;;
+            linuxbuild "$t" x86_64-unknown-linux-gnu.2.17 "" "${LINUX_SMALL[@]}" --features gui,system-fonts ;;
         linux-i586-gui)
-            zigbuild "$t" i586-unknown-linux-gnu.2.17 "" "${PURE_RUST_TLS[@]}" --features gui ;;
+            linuxbuild "$t" i586-unknown-linux-gnu.2.17 "" "${PURE_RUST_TLS[@]}" "${LINUX_SMALL[@]}" --features gui,system-fonts ;;
         macos-arm64-gui | macos-x86_64-gui)
             # A window needs AppKit, which only Apple's macOS SDK provides.
             if [ ! -d "${SDKROOT:-}/System/Library/Frameworks/AppKit.framework" ]; then
@@ -179,7 +187,7 @@ for t in "${TARGETS[@]}"; do
         windows-i686-gui)
             winbuild "$t" i686 "-C link-arg=-Wl,--subsystem,windows" --features gui ;;
         windows-9x)
-            r9xbuild "$t" CONSOLE,4.0 "" --features narrow-console ;;
+            r9xbuild "$t" CONSOLE,4.0 "" ;;
         windows-9x-gui)
             # A GUI program: no console window; our CRT starts at mainCRTStartup.
             r9xbuild "$t" WINDOWS,4.0 "-C link-arg=/ENTRY:mainCRTStartup" --features gui ;;

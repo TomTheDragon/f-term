@@ -219,6 +219,8 @@ pub enum Dialog {
     Messages(Box<super::site::MessagesState>),
     Personals(Box<super::site::PersonalsState>),
     Eicons(Box<super::eicons::EiconPicker>),
+    Browse(Box<super::groups::BrowseState>),
+    Groups(Box<super::groups::GroupsState>),
 }
 
 impl Dialog {
@@ -256,6 +258,7 @@ impl Dialog {
             Dialog::Search(se) => se.filter.insert_str(s.trim()),
             Dialog::Personals(p) => p.filter.insert_str(s.trim()),
             Dialog::Eicons(p) => p.filter.insert_str(s.trim()),
+            Dialog::Groups(g) if g.level() == 0 => g.filter.insert_str(s.trim()),
             _ => {}
         }
     }
@@ -317,6 +320,11 @@ impl Dialog {
                 p.sel = row.min(p.results.len().saturating_sub(1));
                 true
             }
+            Dialog::Browse(b) => {
+                b.sel = row;
+                true
+            }
+            Dialog::Groups(g) => g.select_row(row),
             Dialog::Search(s) => {
                 if s.focus == SearchFocus::Results {
                     s.result_sel = row;
@@ -335,6 +343,25 @@ impl Dialog {
             _ => false,
         }
     }
+}
+
+/// A row of the friends window.
+pub struct FriendRow {
+    pub action: Option<Action>,
+    pub line: Line<'static>,
+    /// The character it is about, for the details.
+    pub name: String,
+    /// What they are to you, shown with the details.
+    pub note: String,
+}
+
+/// The nearest row with an action at or after `sel` (or before it, going
+/// up; the other way when there is none).
+fn selectable(rows: &[FriendRow], sel: usize, down: bool) -> usize {
+    let sel = sel.min(rows.len().saturating_sub(1));
+    let after = (sel..rows.len()).find(|&i| rows[i].action.is_some());
+    let before = (0..=sel).rev().find(|&i| rows.get(i).is_some_and(|r| r.action.is_some()));
+    if down { after.or(before) } else { before.or(after) }.unwrap_or(sel)
 }
 
 fn help_lines(is_op: bool) -> Vec<Line<'static>> {
@@ -356,7 +383,9 @@ fn help_lines(is_op: bool) -> Vec<Line<'static>> {
         k("Alt+W", "Close tab (leave channel)"),
         k("Alt+J / Alt+P", "Join a channel / open a private chat by name"),
         k("Ctrl+F", "Search this tab (Ctrl+F older, Ctrl+G newer, Esc ends)"),
+        k("Ctrl+F in a window", "Find in any list or text (Ctrl+F next, Ctrl+G previous, Esc ends)"),
         k("Alt+N / Alt+M", "F-List notes / site messages"),
+        k("Alt+U / Alt+G", "F-List new/updated characters / groups"),
         k("Alt+E", "Eicon picker (also Tab after [eicon])"),
         k("Ctrl+O", "Focus member list / tab list / input"),
         k("Ctrl+L", "Redraw screen"),
@@ -419,10 +448,12 @@ impl App {
         match &self.dialogs[idx] {
             Dialog::Help { scroll } => {
                 dialog_area = big;
-                let inner = widgets::popup(buf, big, "Help · ↑↓/PgUp/PgDn scroll · Esc close", ascii);
+                let title = format!("F-Term v{} help · ↑↓/PgUp/PgDn scroll · Esc close", crate::protocol::CLIENT_VERSION);
+                let inner = widgets::popup(buf, big, &title, ascii);
                 let is_op = self.chat.is_chatop(&self.chat.me);
                 let lines = widgets::wrap_all(&help_lines(is_op), inner.width as usize, 47);
                 let s = (*scroll).min(lines.len().saturating_sub(inner.height as usize));
+                widgets::note_text(&lines, s);
                 for (i, l) in lines.iter().skip(s).take(inner.height as usize).enumerate() {
                     buf.set_line(inner.x, inner.y + i as u16, l, inner.width);
                 }
@@ -432,6 +463,7 @@ impl App {
                 let inner = widgets::popup(buf, big, &format!("{title} · Esc close"), ascii);
                 let lines = widgets::wrap_all(lines, inner.width as usize, 0);
                 let s = (*scroll).min(lines.len().saturating_sub(inner.height as usize));
+                widgets::note_text(&lines, s);
                 for (i, l) in lines.iter().skip(s).take(inner.height as usize).enumerate() {
                     buf.set_line(inner.x, inner.y + i as u16, l, inner.width);
                 }
@@ -480,7 +512,7 @@ impl App {
                 dialog_area = big;
                 let inner = widgets::popup(buf, big, &format!("{title} · o open in browser · Esc close"), ascii);
                 let (url, mode, proto, tc) =
-                    (url.clone(), self.settings.image_mode, self.settings.graphics_protocol, self.settings.truecolor);
+                    (url.clone(), self.settings.active_image_mode(), self.settings.graphics_protocol, self.settings.truecolor);
                 let view = Rect::new(inner.x, inner.y, inner.width, inner.height.saturating_sub(1));
                 self.images.draw(buf, view, &url, mode, proto, tc);
                 buf.set_stringn(inner.x, inner.bottom() - 1, &url, inner.width as usize, Style::default().fg(Color::DarkGray));
@@ -543,41 +575,55 @@ impl App {
                 dialog_area = big;
                 let inner = widgets::popup(buf, big, "Friends & bookmarks", ascii);
                 let rows = self.friend_rows(fs);
+                let (tab, sel) = (fs.tab, selectable(&rows, fs.sel, true));
+                let state: Option<Result<(), String>> = match &fs.data {
+                    None => None,
+                    Some(Err(e)) => Some(Err(e.clone())),
+                    Some(Ok(_)) => Some(Ok(())),
+                };
                 let tabs = ["Friends", "Bookmarks", "Incoming requests", "Sent requests"];
                 let mut x = inner.x;
                 for (i, t) in tabs.iter().enumerate() {
                     let label = format!(" {t} ");
-                    let st = if i == fs.tab { Style::default().fg(Color::Black).bg(Color::Cyan) } else { Style::default().fg(Color::Gray) };
+                    let st = if i == tab { Style::default().fg(Color::Black).bg(Color::Cyan) } else { Style::default().fg(Color::Gray) };
                     buf.set_string(x, inner.y, &label, st);
                     x += label.chars().count() as u16 + 1;
                 }
-                list_area = Rect::new(inner.x, inner.y + 2, inner.width, inner.height.saturating_sub(3));
-                match &fs.data {
+                widgets::draw_hints(
+                    buf,
+                    inner.x,
+                    inner.bottom() - 1,
+                    &[("Tab", "switch list"), ("Enter", "actions"), ("Ctrl+F", "find"), ("Ctrl+R", "refresh"), ("Esc", "close")],
+                    inner.width,
+                );
+                let body = Rect::new(inner.x, inner.y + 2, inner.width, inner.height.saturating_sub(3));
+                // Details of the selected character at the right, if there is room.
+                let card = body.width >= 70;
+                let left_w = if card { (body.width * 2 / 5).clamp(30, 50) } else { body.width };
+                list_area = Rect::new(body.x, body.y, left_w, body.height);
+                match state {
                     None => buf.set_string(list_area.x, list_area.y, "Loading…", Style::default().fg(Color::DarkGray)),
                     Some(Err(e)) => {
                         buf.set_stringn(
                             list_area.x,
                             list_area.y,
                             format!("Error: {e}"),
-                            list_area.width as usize,
+                            body.width as usize,
                             Style::default().fg(Color::LightRed),
                         );
                     }
-                    Some(Ok(_)) => {
-                        let items: Vec<Line<'static>> = rows.iter().map(|r| r.1.clone()).collect();
-                        list_offset = widgets::list(buf, list_area, &items, fs.sel, top);
+                    Some(Ok(())) => {
+                        let items: Vec<Line<'static>> = rows.iter().map(|r| r.line.clone()).collect();
+                        list_offset = widgets::list(buf, list_area, &items, sel, top);
                         if items.is_empty() {
                             buf.set_string(list_area.x + 1, list_area.y, "Nothing here.", Style::default().fg(Color::DarkGray));
+                        } else if card {
+                            let r = &rows[sel.min(rows.len() - 1)];
+                            let right = Rect::new(body.x + left_w + 2, body.y, body.width.saturating_sub(left_w + 2), body.height);
+                            self.draw_friend_card(buf, right, &r.name, &r.note);
                         }
                     }
                 }
-                widgets::draw_hints(
-                    buf,
-                    inner.x,
-                    inner.bottom() - 1,
-                    &[("Tab", "switch list"), ("Enter", "actions"), ("Ctrl+R", "refresh"), ("Esc", "close")],
-                    inner.width,
-                );
             }
             Dialog::Settings(st) => {
                 dialog_area = big;
@@ -725,6 +771,7 @@ impl App {
                             })
                             .collect();
                         let s = l.scroll.min(lines.len().saturating_sub(body.height as usize));
+                        widgets::note_text(&lines, s);
                         for (i, line) in lines.iter().skip(s).take(body.height as usize).enumerate() {
                             buf.set_line(body.x, body.y + i as u16, line, body.width);
                         }
@@ -822,6 +869,16 @@ impl App {
                 list_area = l;
                 list_offset = o;
             }
+            Dialog::Browse(_) | Dialog::Groups(_) => {
+                let (d, l, o) = if matches!(self.dialogs[idx], Dialog::Browse(_)) {
+                    self.draw_browse(buf, big, idx, top)
+                } else {
+                    self.draw_groups(buf, big, idx, top)
+                };
+                dialog_area = d;
+                list_area = l;
+                list_offset = o;
+            }
             Dialog::Notes(_) | Dialog::Messages(_) | Dialog::Personals(_) => {
                 let (d, l, o) = self.draw_site_dialog(buf, big, idx, top);
                 dialog_area = d;
@@ -854,8 +911,8 @@ impl App {
         v
     }
 
-    /// Rows for the friends dialog: (action, line).
-    fn friend_rows(&self, fs: &FriendsState) -> Vec<(Action, Line<'static>)> {
+    /// Rows for the friends dialog. Your characters head their friends.
+    fn friend_rows(&self, fs: &FriendsState) -> Vec<FriendRow> {
         let Some(Ok(d)) = &fs.data else { return Vec::new() };
         let person = |name: &str, extra: String| -> Line<'static> {
             let st = self.chat.status_of(name);
@@ -870,51 +927,93 @@ impl App {
                 ),
             ])
         };
-        let mut rows: Vec<(bool, String, Action, Line<'static>)> = match fs.tab {
-            0 => d
-                .friends
-                .iter()
-                .map(|(theirs, mine, _)| {
-                    (
-                        self.chat.is_online(theirs),
-                        theirs.to_lowercase(),
-                        Action::Profile(theirs.clone()),
-                        person(theirs, format!("  (friend of {mine})")),
-                    )
-                })
-                .collect(),
+        let row = |action: Action, line: Line<'static>, name: &str, note: String| FriendRow {
+            action: Some(action),
+            line,
+            name: name.to_string(),
+            note,
+        };
+        if fs.tab == 0 {
+            // One section per own character, the current one first.
+            let me = self.chat.me.to_lowercase();
+            let mut mine: Vec<String> = Vec::new();
+            for (_, m, _) in &d.friends {
+                if !mine.iter().any(|x| x.eq_ignore_ascii_case(m)) {
+                    mine.push(m.clone());
+                }
+            }
+            mine.sort_by_key(|m| (m.to_lowercase() != me, m.to_lowercase()));
+            let mut rows = Vec::new();
+            for m in mine {
+                let mut list: Vec<&String> = d.friends.iter().filter(|f| f.1.eq_ignore_ascii_case(&m)).map(|f| &f.0).collect();
+                list.sort_by_key(|t| (!self.chat.is_online(t), t.to_lowercase()));
+                let online = list.iter().filter(|t| self.chat.is_online(t)).count();
+                let count = format!("{} friend{}, {online} online", list.len(), if list.len() == 1 { "" } else { "s" });
+                let head = Line::from(vec![
+                    Span::styled(m.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!(" · {count}"), Style::default().fg(Color::DarkGray)),
+                ]);
+                rows.push(row(Action::Profile(m.clone()), head, &m, format!("Your character · {count}")));
+                for t in list {
+                    let mut line = person(t, String::new());
+                    line.spans.insert(0, Span::raw("  "));
+                    rows.push(row(Action::FriendOf(t.clone(), m.clone()), line, t, format!("♥ Friend of {m}")));
+                }
+            }
+            return rows;
+        }
+        let mut rows: Vec<(bool, String, FriendRow)> = match fs.tab {
             1 => d
                 .bookmarks
                 .iter()
-                .map(|b| (self.chat.is_online(b), b.to_lowercase(), Action::Profile(b.clone()), person(b, String::new())))
+                .map(|b| {
+                    let note = if self.chat.is_friend(b) { "★ Bookmarked · ♥ friend" } else { "★ Bookmarked" };
+                    (self.chat.is_online(b), b.to_lowercase(), row(Action::Profile(b.clone()), person(b, String::new()), b, note.into()))
+                })
                 .collect(),
             2 => d
                 .incoming
                 .iter()
                 .map(|r| {
-                    (
-                        true,
-                        r.source.to_lowercase(),
-                        Action::FriendRequestAction("incoming".into(), r.id.clone()),
-                        person(&r.source, format!("  → {}", r.dest)),
-                    )
+                    let a = Action::FriendRequestAction("incoming".into(), r.id.clone());
+                    let line = person(&r.source, format!("  → {}", r.dest));
+                    (true, r.source.to_lowercase(), row(a, line, &r.source, format!("Wants to be friends with {}", r.dest)))
                 })
                 .collect(),
             _ => d
                 .pending
                 .iter()
                 .map(|r| {
-                    (
-                        true,
-                        r.dest.to_lowercase(),
-                        Action::FriendRequestAction("cancel".into(), r.id.clone()),
-                        person(&r.dest, format!("  (from {})", r.source)),
-                    )
+                    let a = Action::FriendRequestAction("cancel".into(), r.id.clone());
+                    let line = person(&r.dest, format!("  (from {})", r.source));
+                    (true, r.dest.to_lowercase(), row(a, line, &r.dest, format!("Your request from {}", r.source)))
                 })
                 .collect(),
         };
         rows.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        rows.into_iter().map(|r| (r.2, r.3)).collect()
+        rows.into_iter().map(|r| r.2).collect()
+    }
+
+    /// Details of a character in the friends window.
+    fn draw_friend_card(&mut self, buf: &mut Buffer, area: Rect, name: &str, note: &str) {
+        let st = self.chat.status_of(name);
+        let msg = self.chat.character(name).map(|c| bbcode::strip(&c.status_msg)).unwrap_or_default();
+        let mut extra = vec![
+            Line::from(Span::styled(note.to_string(), Style::default().fg(Color::Yellow))),
+            Line::from(Span::styled(format!("{} {}", st.symbol(), st.label()), Style::default().fg(st.color()))),
+        ];
+        if !msg.trim().is_empty() {
+            extra.push(Line::from(Span::styled(msg.trim().to_string(), Style::default().fg(Color::Gray))));
+        }
+        let card = self.char_card(name);
+        let map = self.mapping.clone();
+        let info: Vec<(String, String)> = match (&card, &map) {
+            (Some(Ok(v)), Some(map)) => super::profile::info_groups(v, map).into_iter().flat_map(|(_, rows)| rows).collect(),
+            (Some(Err(e)), _) => vec![("Error".into(), e.clone())],
+            _ => vec![("".into(), "Loading…".into())],
+        };
+        let gender = info.iter().find(|i| i.0 == "Gender").map(|i| i.1.clone()).unwrap_or_else(|| self.chat.gender_of(name));
+        self.draw_character_card(buf, area, name, &gender, &info, extra);
     }
 
     pub(super) fn dialog_key(&mut self, key: KeyEvent) {
@@ -997,6 +1096,8 @@ impl App {
             Dialog::Messages(_) => return self.messages_key(key),
             Dialog::Personals(_) => return self.personals_key(key),
             Dialog::Eicons(_) => return self.eicon_picker_key(key),
+            Dialog::Browse(_) => return self.browse_key(key),
+            Dialog::Groups(_) => return self.groups_key(key),
             Dialog::Profile(_) => unreachable!(),
         }
         if close {
@@ -1076,16 +1177,24 @@ impl App {
                 fs.tab = (fs.tab + 3) % 4;
                 fs.sel = 0;
             }
-            KeyCode::Up | KeyCode::Char('k') => fs.sel = fs.sel.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => fs.sel = (fs.sel + 1).min(rows.len().saturating_sub(1)),
+            KeyCode::Up | KeyCode::Char('k') => {
+                let cur = selectable(&rows, fs.sel, true);
+                fs.sel = selectable(&rows, cur.saturating_sub(1), false);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let cur = selectable(&rows, fs.sel, true);
+                fs.sel = selectable(&rows, (cur + 1).min(rows.len().saturating_sub(1)), true);
+            }
             KeyCode::Char('r') if ctrl => {
                 fs.data = None;
                 self.api_call(|api| ApiReply::FriendLists(api.friend_lists()));
             }
             KeyCode::Enter => {
-                let Some((action, _)) = rows.into_iter().nth(fs.sel) else { return };
+                let sel = selectable(&rows, fs.sel, true);
+                let Some(FriendRow { action: Some(action), .. }) = rows.into_iter().nth(sel) else { return };
                 match action {
                     Action::Profile(name) => self.open_user_menu(&name),
+                    Action::FriendOf(theirs, mine) => self.open_friend_menu(&theirs, &mine),
                     Action::FriendRequestAction(kind, id) if kind == "incoming" => {
                         let items = vec![
                             MenuItem::new("Accept", Action::FriendRequestAction("accept".into(), id.clone())),
@@ -1119,10 +1228,11 @@ impl App {
                 let back = key.code == KeyCode::Left;
                 if self.settings.is_bool(key_name) {
                     let _ = self.settings.set(key_name, "toggle");
-                } else if key_name == "image_mode" {
+                } else if key_name == "image_mode" || key_name == "gui_image_mode" {
                     let all = ImageMode::ALL;
-                    let i = all.iter().position(|m| *m == self.settings.image_mode).unwrap_or(0);
-                    self.settings.image_mode = all[if back { (i + all.len() - 1) % all.len() } else { (i + 1) % all.len() }];
+                    let field = if key_name == "image_mode" { &mut self.settings.image_mode } else { &mut self.settings.gui_image_mode };
+                    let i = all.iter().position(|m| *m == *field).unwrap_or(0);
+                    *field = all[if back { (i + all.len() - 1) % all.len() } else { (i + 1) % all.len() }];
                 } else if key_name == "notify_online" {
                     let all = crate::config::WatchNotify::ALL;
                     let i = all.iter().position(|m| *m == self.settings.notify_online).unwrap_or(0);

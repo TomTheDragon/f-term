@@ -163,6 +163,12 @@ pub fn pixel_output() -> Option<(u16, u16)> {
     (v != 0).then_some(((v >> 16) as u16, v as u16))
 }
 
+/// The window's cell size when it paints this mode as real pixels: only in
+/// `native` mode; the other modes draw characters there as in a terminal.
+fn window_pixels(mode: ImageMode, cell: Option<(u16, u16)>) -> Option<(u16, u16)> {
+    cell.filter(|_| mode == ImageMode::Native)
+}
+
 /// The images placed in the frame just drawn.
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub fn placements() -> Vec<Placement> {
@@ -264,7 +270,7 @@ impl ImageStore {
             (ImageMode::Native, GraphicsProtocol::Auto) => detect_protocol(),
             _ => None,
         };
-        let gui = pixel_output().filter(|_| mode != ImageMode::Off);
+        let gui = window_pixels(mode, pixel_output());
         // Native terminal images stay still: replacing them forces full redraws.
         let (frame, px) = if self.animate && frames.is_animated() && (gui.is_some() || native.is_none()) {
             self.animating = true;
@@ -301,6 +307,7 @@ impl ImageStore {
         let text_mode = match mode {
             ImageMode::Ascii => 0u8,
             ImageMode::ColorAscii => 1,
+            ImageMode::Braille => 3,
             _ => 2,
         };
         let key = (format!("{url}#{frame}"), area.width, area.height, text_mode + if truecolor { 0 } else { 10 });
@@ -311,6 +318,7 @@ impl ImageStore {
             let lines = match text_mode {
                 0 => render_ascii(&px, area.width, area.height, false, truecolor),
                 1 => render_ascii(&px, area.width, area.height, true, truecolor),
+                3 => render_braille(&px, area.width, area.height, truecolor),
                 _ => render_blocks(&px, area.width, area.height, truecolor),
             };
             self.text_cache.insert(key.clone(), lines);
@@ -550,6 +558,82 @@ pub fn render_blocks(p: &Pixels, max_cols: u16, max_rows: u16, truecolor: bool) 
                 (false, false) => Span::raw(" "),
             };
             spans.push(span);
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
+/// Bit of each dot of a Braille character (U+2800 + bits), by [row][column]
+/// within the cell's 2x4 dots.
+const BRAILLE_BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
+
+/// Braille dots: each character shows 2x4 dots, set by error-diffusion
+/// dithering of the brightness (contrast stretched to the image), and
+/// coloured with the average colour of its dots.
+pub fn render_braille(p: &Pixels, max_cols: u16, max_rows: u16, truecolor: bool) -> Vec<Line<'static>> {
+    let (cols, rows) = fit(p, max_cols, max_rows, 1.0, 2.0);
+    let (w, h) = (cols as usize * 2, rows as usize * 4);
+    let img = resample(p, w as u32, h as u32);
+    let lum: Vec<f32> = (0..w * h)
+        .map(|i| {
+            let c = img.get((i % w) as u32, (i / w) as u32);
+            (c[3] as f32 / 255.0) * (0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32) / 255.0
+        })
+        .collect();
+    // Stretch the visible part to the full range, so dark images still show.
+    let opaque = |i: usize| img.get((i % w) as u32, (i / w) as u32)[3] >= 128;
+    let (lo, hi) = (0..w * h).filter(|&i| opaque(i)).fold((1.0f32, 0.0f32), |(lo, hi), i| (lo.min(lum[i]), hi.max(lum[i])));
+    let (lo, range) = if hi - lo > 0.05 { (lo, hi - lo) } else { (0.0, 1.0) };
+    let mut v: Vec<f32> = (0..w * h).map(|i| if opaque(i) { ((lum[i] - lo) / range).clamp(0.0, 1.0) } else { 0.0 }).collect();
+    // Floyd-Steinberg.
+    let mut on = vec![false; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let lit = v[i] >= 0.5;
+            on[i] = lit && opaque(i);
+            let err = v[i] - if lit { 1.0 } else { 0.0 };
+            if x + 1 < w {
+                v[i + 1] += err * 7.0 / 16.0;
+            }
+            if y + 1 < h {
+                if x > 0 {
+                    v[i + w - 1] += err * 3.0 / 16.0;
+                }
+                v[i + w] += err * 5.0 / 16.0;
+                if x + 1 < w {
+                    v[i + w + 1] += err / 16.0;
+                }
+            }
+        }
+    }
+    let mut lines = Vec::with_capacity(rows as usize);
+    for row in 0..rows as usize {
+        let mut spans = Vec::with_capacity(cols as usize);
+        for col in 0..cols as usize {
+            let (mut bits, mut n) = (0u8, 0u32);
+            let mut sum = [0u32; 3];
+            for (dy, row_bits) in BRAILLE_BITS.iter().enumerate() {
+                for (dx, bit) in row_bits.iter().enumerate() {
+                    let (x, y) = (col * 2 + dx, row * 4 + dy);
+                    if on[y * w + x] {
+                        bits |= bit;
+                        let c = img.get(x as u32, y as u32);
+                        for k in 0..3 {
+                            sum[k] += c[k] as u32;
+                        }
+                        n += 1;
+                    }
+                }
+            }
+            if bits == 0 {
+                spans.push(Span::raw(" "));
+                continue;
+            }
+            let ch = char::from_u32(0x2800 + bits as u32).unwrap_or(' ');
+            let (r, g, b) = ((sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8);
+            spans.push(Span::styled(ch.to_string(), Style::default().fg(rgb_color(r, g, b, truecolor))));
         }
         lines.push(Line::from(spans));
     }
@@ -842,9 +926,25 @@ mod tests {
     }
     #[test]
     fn renders() {
+        // In the window only `native` is pixels; the rest are characters.
+        assert_eq!(window_pixels(ImageMode::Native, Some((8, 16))), Some((8, 16)));
+        for m in [ImageMode::Ascii, ImageMode::ColorAscii, ImageMode::Blocks, ImageMode::Braille, ImageMode::Off] {
+            assert_eq!(window_pixels(m, Some((8, 16))), None);
+        }
+        assert_eq!(window_pixels(ImageMode::Native, None), None);
         let p = checker();
         assert_eq!(render_blocks(&p, 8, 4, true).len(), 4);
         assert_eq!(render_ascii(&p, 8, 4, false, true).len(), 4);
+        // Braille: 2x4 dots per character; a white square lights all dots,
+        // a transparent one none.
+        let white = Pixels { width: 4, height: 8, rgba: [255u8; 4 * 32].to_vec() };
+        let b = render_braille(&white, 2, 2, true);
+        assert_eq!(b.len(), 2);
+        assert!(b.iter().all(|l| l.spans.iter().all(|s| s.content == "⣿")), "{b:?}");
+        let clear = Pixels { width: 4, height: 8, rgba: vec![0; 4 * 32] };
+        assert!(render_braille(&clear, 2, 2, true).iter().all(|l| l.spans.iter().all(|s| s.content == " ")));
+        let b = render_braille(&p, 4, 2, true);
+        assert!(b.iter().flat_map(|l| l.spans.iter()).any(|s| s.content != " " && s.content != "⣿"), "{b:?}");
         let s = sixel(&p);
         assert!(s.starts_with("\x1bP") && s.ends_with("\x1b\\"));
         let png = png(&p);

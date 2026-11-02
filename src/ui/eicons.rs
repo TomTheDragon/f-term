@@ -127,11 +127,11 @@ impl App {
         let sel = p.results.get(p.sel).cloned();
         if let Some(name) = sel {
             let view = Rect::new(body.x + list_w + 2, body.y, body.width.saturating_sub(list_w + 2), body.height.min(12));
-            if self.settings.image_mode == crate::config::ImageMode::Off {
+            if self.settings.active_image_mode() == crate::config::ImageMode::Off {
                 buf.set_string(view.x, view.y, "Images are off (/images blocks).", Style::default().fg(Color::DarkGray));
             } else if view.width > 2 {
                 let url = crate::images::eicon_url(&name);
-                let (mode, proto, tc) = (self.settings.image_mode, self.settings.graphics_protocol, self.settings.truecolor);
+                let (mode, proto, tc) = (self.settings.active_image_mode(), self.settings.graphics_protocol, self.settings.truecolor);
                 self.images.request(&url, &self.tx, AppEvent::Image);
                 let size = Rect::new(view.x, view.y, view.width.min(view.height * 2), view.height);
                 self.images.draw(buf, size, &url, mode, proto, tc);

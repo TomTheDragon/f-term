@@ -1,6 +1,6 @@
 [package]
 name = "f-term"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 # Rust 1.77 is the last release that officially targets Windows 7, so every
 # dependency has to stay compatible with it (see .cargo/config.toml).
@@ -23,9 +23,6 @@ images = ["dep:image"]
 # draws with GDI (src/ui/gui.rs, also on Windows 9x); Linux and macOS use winit
 # with a software renderer and an embedded font (src/ui/gui_winit.rs).
 gui = ["dep:winit", "dep:softbuffer", "dep:fontdue", "dep:arboard"]
-# Compact layout for consoles that can't be wider than 80 columns (used for
-# f-term-windows-9x.exe).
-narrow-console = []
 # For distribution packages (scripts/package-linux.sh):
 # - prefer-terminal: with `gui`, run in the terminal when started from one; the
 #   window opens when started without one (e.g. from the desktop menu) or

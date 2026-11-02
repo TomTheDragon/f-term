@@ -113,6 +113,118 @@ pub struct Personal {
     pub message: String,
 }
 
+/// A character from the "Browse New" pages.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BrowseCharacter {
+    pub name: String,
+    /// (field, value), e.g. ("Gender", "Male").
+    pub info: Vec<(String, String)>,
+}
+
+/// One page of new/updated or recently created characters.
+#[derive(Debug, Clone, Default)]
+pub struct BrowsePage {
+    pub characters: Vec<BrowseCharacter>,
+    pub offset: usize,
+    pub next: Option<usize>,
+}
+
+/// Characters per page in "Browse New".
+pub const BROWSE_PER_PAGE: usize = 20;
+
+/// A group in the group list.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GroupSummary {
+    /// The `group=` value of its address.
+    pub slug: String,
+    pub name: String,
+    /// As BBCode.
+    pub description: String,
+    pub owner: String,
+    pub posts: i64,
+    pub members: i64,
+    pub last_post: String,
+    /// One of your characters is a member.
+    pub joined: bool,
+}
+
+/// A forum of a group.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Forum {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    /// "715 posts in 285 threads"
+    pub stats: String,
+    /// "Last post by X in Y, 2w ago"
+    pub last: String,
+}
+
+/// A group's own page.
+#[derive(Debug, Clone, Default)]
+pub struct Group {
+    pub slug: String,
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub forums: Vec<Forum>,
+    /// Your characters in the group and not in it: (character id, name).
+    pub joined: Vec<(i64, String)>,
+    pub not_joined: Vec<(i64, String)>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ThreadSummary {
+    pub id: i64,
+    pub title: String,
+    pub author: String,
+    pub posts: i64,
+    pub created: String,
+    pub last_post: String,
+    pub locked: bool,
+    pub poll: bool,
+}
+
+/// A forum with its threads.
+#[derive(Debug, Clone, Default)]
+pub struct ForumPage {
+    pub id: i64,
+    pub name: String,
+    pub group_id: i64,
+    pub group_slug: String,
+    pub group_name: String,
+    pub threads: Vec<ThreadSummary>,
+    /// New threads can be posted here.
+    pub can_post: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ForumPost {
+    pub id: i64,
+    pub author: String,
+    pub posted: String,
+    /// As BBCode.
+    pub body: String,
+}
+
+/// One page of a thread.
+#[derive(Debug, Clone, Default)]
+pub struct ThreadPage {
+    pub id: i64,
+    pub subject: String,
+    pub group_id: i64,
+    pub group_slug: String,
+    pub group_name: String,
+    pub forum_id: i64,
+    pub forum_name: String,
+    pub posts: Vec<ForumPost>,
+    /// Offsets of all pages, and the one shown.
+    pub pages: Vec<usize>,
+    pub offset: usize,
+    /// Replies can be posted (not locked, allowed).
+    pub can_reply: bool,
+}
+
 /// Unread notes and site messages, for the status bar.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Counters {
@@ -516,6 +628,89 @@ impl Site {
             .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(Value::as_str).map(html_to_text).collect())
             .unwrap_or_default())
+    }
+
+    // ------------------------------------------------------------------
+    // Browse New, groups
+
+    /// New/updated characters, or (with `newest`) recently created ones.
+    pub fn browse(&self, newest: bool, offset: usize) -> Result<BrowsePage, String> {
+        let kind = if newest { "newest" } else { "edited" };
+        let mut p = parse_browse(&self.page(&format!("/character_browse.php?type={kind}&offset={offset}"))?);
+        p.offset = offset;
+        p.next = p.next.filter(|&n| n > offset);
+        Ok(p)
+    }
+
+    pub fn groups(&self) -> Result<Vec<GroupSummary>, String> {
+        let list = parse_group_list(&self.page("/group_browse.php")?);
+        if list.is_empty() {
+            return Err("The group list could not be read.".into());
+        }
+        Ok(list)
+    }
+
+    pub fn group(&self, slug: &str) -> Result<Group, String> {
+        let html = self.page(&format!("/group.php?group={}", urlenc(slug)))?;
+        let mut g = parse_group(&html).ok_or_else(|| page_message(&html, "That group could not be found."))?;
+        g.slug = slug.to_string();
+        Ok(g)
+    }
+
+    pub fn forum(&self, id: i64) -> Result<ForumPage, String> {
+        let html = self.page(&format!("/forum.php?forum={id}"))?;
+        let mut f = parse_forum(&html).ok_or_else(|| page_message(&html, "That forum could not be found."))?;
+        f.id = id;
+        Ok(f)
+    }
+
+    /// A page of a thread; `offset` None is the last page.
+    pub fn thread(&self, id: i64, offset: Option<usize>) -> Result<ThreadPage, String> {
+        let off = offset.map(|o| o.to_string()).unwrap_or_else(|| "last".into());
+        let html = self.page(&format!("/thread.php?thread={id}&offset={off}"))?;
+        let mut t = parse_thread(&html).ok_or_else(|| page_message(&html, "That thread could not be found."))?;
+        t.id = id;
+        Ok(t)
+    }
+
+    pub fn group_join(&self, group_id: i64, character_id: i64, join: bool) -> Result<(), String> {
+        let (g, c) = (group_id.to_string(), character_id.to_string());
+        let path = if join { "/json/joinGroup.json" } else { "/json/leaveGroup.json" };
+        self.json(path, &[("group_id", &g), ("character_id", &c)], true).map(|_| ())
+    }
+
+    pub fn post_reply(&self, group_id: i64, forum_id: i64, thread_id: i64, character_id: i64, message: &str) -> Result<(), String> {
+        let (g, f, t, c) = (group_id.to_string(), forum_id.to_string(), thread_id.to_string(), character_id.to_string());
+        self.form_post(
+            "/action/script_create_post.php",
+            &[("group_id", &g), ("thread_id", &t), ("forum_id", &f), ("character_id", &c), ("message", message)],
+        )
+    }
+
+    pub fn post_thread(&self, group_id: i64, forum_id: i64, character_id: i64, subject: &str, message: &str) -> Result<(), String> {
+        let (g, f, c) = (group_id.to_string(), forum_id.to_string(), character_id.to_string());
+        self.form_post(
+            "/action/script_create_thread.php",
+            &[("group_id", &g), ("forum_id", &f), ("subject", subject), ("character_id", &c), ("message", message), ("submitpoll", "0")],
+        )
+    }
+
+    /// Send one of the site's HTML forms. The site answers a successful post
+    /// with a redirect, an error with a "System message" page.
+    fn form_post(&self, path: &str, params: &[(&str, &str)]) -> Result<(), String> {
+        self.ensure_login()?;
+        let token = self.csrf()?;
+        let mut form: Vec<(&str, &str)> = params.to_vec();
+        form.push(("csrf_token", &token));
+        let (status, location, body) = self.request(path, Some(&form))?;
+        if (300..400).contains(&status) {
+            return Ok(());
+        }
+        if body.contains("class=\"Thread_Post\"") {
+            return Ok(());
+        }
+        crate::net::log::debug(&format!("site: {path} -> HTTP {status} {location}"));
+        Err(page_message(&body, &format!("the website answered with HTTP {status}")))
     }
 
     pub fn guestbook_post(&self, target_id: i64, source_id: i64, private: bool, message: &str) -> Result<(), String> {
@@ -958,6 +1153,377 @@ pub fn parse_message_center(html: &str) -> MessageCenter {
     mc
 }
 
+/// The page's main part (`id="Content"` up to the page bottom).
+fn content_part(html: &str) -> &str {
+    let content = match html.find("id=\"Content\"").or_else(|| html.find("id='Content'")) {
+        Some(i) => &html[i..],
+        None => html,
+    };
+    content.split("name=\"bottom-of-page\"").next().unwrap_or(content)
+}
+
+/// The text of a page's "System message" (`DisplayedMessage`), or `default`.
+fn page_message(html: &str, default: &str) -> String {
+    between(html, "id='DisplayedMessage'>", "<")
+        .or_else(|| between(html, "id=\"DisplayedMessage\">", "<"))
+        .map(|m| html_to_text(&m).trim().to_string())
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
+/// Start tags in `html` from byte `from`: (position, the tag's source).
+fn next_tag(html: &str, from: usize) -> Option<(usize, &str)> {
+    let mut from = from;
+    loop {
+        let at = from + html.get(from..)?.find('<')?;
+        let e = html[at..].find('>')?;
+        let tag = &html[at..at + e + 1];
+        if tag[1..].starts_with(|c: char| c.is_ascii_alphabetic()) {
+            return Some((at, tag));
+        }
+        from = at + 1;
+    }
+}
+
+fn tag_name(tag: &str) -> String {
+    tag[1..].chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase()
+}
+
+/// Elements whose class list contains `class` (not looking inside a match):
+/// (start tag, inner HTML).
+fn elements_with_class<'a>(html: &'a str, class: &str) -> Vec<(&'a str, &'a str)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some((at, tag)) = next_tag(html, from) {
+        from = at + 1;
+        if !attr(tag, "class").unwrap_or_default().split_whitespace().any(|c| c == class) {
+            continue;
+        }
+        let end = element_end(html, at, &tag_name(tag));
+        out.push((tag, &html[(at + tag.len()).min(end)..end]));
+        from = end.max(at + 1);
+    }
+    out
+}
+
+/// Inner HTML of the element with this id.
+fn element_by_id<'a>(html: &'a str, id: &str) -> Option<&'a str> {
+    let mut from = 0;
+    while let Some((at, tag)) = next_tag(html, from) {
+        from = at + 1;
+        if attr(tag, "id").as_deref() == Some(id) {
+            let end = element_end(html, at, &tag_name(tag));
+            return Some(&html[(at + tag.len()).min(end)..end]);
+        }
+    }
+    None
+}
+
+/// Links: (href, inner HTML).
+fn anchors(html: &str) -> Vec<(String, &str)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some((at, tag)) = next_tag(html, from) {
+        from = at + 1;
+        if tag_name(tag) != "a" {
+            continue;
+        }
+        let end = element_end(html, at, "a");
+        out.push((attr(tag, "href").unwrap_or_default(), &html[(at + tag.len()).min(end)..end]));
+        from = end.max(at + 1);
+    }
+    out
+}
+
+/// The value of a form field `<input name="...">`.
+fn input_value(html: &str, name: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some((at, tag)) = next_tag(html, from) {
+        from = at + 1;
+        if tag_name(tag) == "input" && attr(tag, "name").as_deref() == Some(name) {
+            return attr(tag, "value");
+        }
+    }
+    None
+}
+
+/// Options of the `<select>` with this id: (value, text).
+fn select_options(html: &str, id: &str) -> Vec<(String, String)> {
+    let Some(i) = html.find(&format!("id=\"{id}\"")).or_else(|| html.find(&format!("id='{id}'"))) else { return Vec::new() };
+    let sel = &html[i..];
+    let sel = &sel[..sel.find("</select>").unwrap_or(sel.len())];
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some((at, tag)) = next_tag(sel, from) {
+        from = at + 1;
+        if tag_name(tag) != "option" {
+            continue;
+        }
+        let rest = &sel[at + tag.len()..];
+        let text = &rest[..rest.find('<').unwrap_or(rest.len())];
+        let value = attr(tag, "value").unwrap_or_default();
+        if !value.is_empty() {
+            out.push((value, html_to_text(text).trim().to_string()));
+        }
+    }
+    out
+}
+
+/// A `FormattedBlock`: the raw BBCode, HTML-escaped.
+fn bbcode_block(inner: &str) -> String {
+    let mut s = inner.replace('\r', "");
+    for br in ["<br />", "<br/>", "<br>"] {
+        s = s.replace(&format!("{br}\n"), "\n").replace(br, "\n");
+    }
+    unescape(s.trim())
+}
+
+/// The first number after `marker`.
+fn number_after(s: &str, marker: &str) -> i64 {
+    let Some(i) = s.find(marker) else { return 0 };
+    let d: String = s[i + marker.len()..].trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+    d.parse().unwrap_or(0)
+}
+
+/// The `offset=` of the page's "next" link.
+fn next_offset(html: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some((at, tag)) = next_tag(html, from) {
+        from = at + 1;
+        if tag_name(tag) == "a" && attr(tag, "class").unwrap_or_default().split_whitespace().any(|c| c == "next") {
+            let href = attr(tag, "href").unwrap_or_default();
+            return href.split(['?', '&']).find_map(|p| p.strip_prefix("offset=")).and_then(|n| n.parse().ok());
+        }
+    }
+    None
+}
+
+/// The `name=` value of an address like `x.php?name=value&...`.
+fn query_value(href: &str, name: &str) -> Option<String> {
+    let q = href.split_once('?')?.1;
+    q.split('&').find_map(|p| p.strip_prefix(&format!("{name}="))).map(url_dec)
+}
+
+/// Plain text of an element, with its lines tidied.
+fn tidy_text(html: &str) -> Vec<String> {
+    html_to_text(html).lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|l| !l.is_empty()).collect()
+}
+
+pub fn parse_browse(html: &str) -> BrowsePage {
+    let content = content_part(html);
+    let mut page = BrowsePage { next: next_offset(content), ..Default::default() };
+    for (tag, inner) in elements_with_class(content, "ListedCharacter") {
+        let name = elements_with_class(inner, "ResultListingName")
+            .first()
+            .map(|(_, n)| html_to_text(n).trim().to_string())
+            .filter(|n| !n.is_empty())
+            .or_else(|| attr(tag, "href").map(|h| url_dec(h.trim_start_matches('/').trim_start_matches("c/").trim_end_matches('/'))));
+        let Some(name) = name else { continue };
+        let info = elements_with_class(inner, "CharacterBrowseInfo")
+            .into_iter()
+            .filter_map(|(_, i)| {
+                let key = html_to_text(&between(i, "<strong>", "</strong>")?).trim().trim_end_matches(':').trim().to_string();
+                let value = html_to_text(i.split_once("</strong>")?.1).trim().to_string();
+                (!key.is_empty() && !value.is_empty()).then_some((key, value))
+            })
+            .collect();
+        page.characters.push(BrowseCharacter { name, info });
+    }
+    page
+}
+
+pub fn parse_group_list(html: &str) -> Vec<GroupSummary> {
+    let joined: Vec<String> = select_options(html, "GroupJumpLabel").into_iter().map(|(v, _)| v.to_lowercase()).collect();
+    let content = content_part(html);
+    let mut out: Vec<GroupSummary> = Vec::new();
+    for (_, inner) in elements_with_class(content, "ListedGroup") {
+        let links = anchors(inner);
+        let Some(slug) = links.iter().find_map(|(h, _)| query_value(h, "group")) else { continue };
+        let name = links
+            .iter()
+            .filter(|(h, _)| h.contains("group.php?group="))
+            .map(|(_, t)| html_to_text(t).trim().to_string())
+            .find(|t| !t.is_empty())
+            .unwrap_or_else(|| slug.clone());
+        let description = elements_with_class(inner, "FormattedBlock").first().map(|(_, d)| bbcode_block(d)).unwrap_or_default();
+        let stats = elements_with_class(inner, "ListedGroupStats").first().map(|(_, s)| *s).unwrap_or("");
+        let owner = between(stats, "Owner:", "<br").map(|o| html_to_text(&o).trim().to_string()).unwrap_or_default();
+        let last_post = between(stats, "Last post:", "<br").map(|o| html_to_text(&o).trim().to_string()).unwrap_or_default();
+        out.push(GroupSummary {
+            joined: joined.contains(&slug.to_lowercase()),
+            slug,
+            name,
+            description,
+            owner,
+            posts: number_after(stats, "Posts:"),
+            members: number_after(stats, "Members:"),
+            last_post,
+        });
+    }
+    // Your groups first.
+    out.sort_by_key(|g| !g.joined);
+    out
+}
+
+/// Own characters in a `<select>` of the page: (id, name).
+fn character_options(html: &str, id: &str) -> Vec<(i64, String)> {
+    select_options(html, id).into_iter().filter_map(|(v, n)| Some((v.parse().ok()?, n))).collect()
+}
+
+pub fn parse_group(html: &str) -> Option<Group> {
+    let content = content_part(html);
+    let header = element_by_id(content, "GroupHeader")?;
+    let name = between(header, "<h3", "</h3>").and_then(|h| h.split_once('>').map(|x| html_to_text(x.1).trim().to_string()));
+    let id = anchors(header)
+        .into_iter()
+        .find_map(|(h, _)| query_value(&h, "group_id"))
+        .or_else(|| input_value(content, "group_id"))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let forums = elements_with_class(content, "GroupForum")
+        .into_iter()
+        .filter_map(|(_, inner)| {
+            let links = anchors(inner);
+            let (href, text) = links.iter().find(|(h, _)| h.contains("forum.php?forum="))?;
+            let id = query_value(href, "forum")?.parse().ok()?;
+            // The statistics box comes before the forum's link.
+            let stats_html = &inner[..inner.find("forum.php?forum=").unwrap_or(0)];
+            let stats = tidy_text(stats_html);
+            Some(Forum {
+                id,
+                name: html_to_text(text).trim().to_string(),
+                description: elements_with_class(inner, "FormattedBlock").first().map(|(_, d)| bbcode_block(d)).unwrap_or_default(),
+                stats: stats.first().cloned().unwrap_or_default(),
+                last: stats.iter().skip(1).cloned().collect::<Vec<_>>().join(" "),
+            })
+        })
+        .collect();
+    Some(Group {
+        slug: String::new(),
+        id,
+        name: name.unwrap_or_default(),
+        description: elements_with_class(header, "FormattedBlock").first().map(|(_, d)| bbcode_block(d)).unwrap_or_default(),
+        forums,
+        joined: character_options(content, "JoinedUsersList"),
+        not_joined: character_options(content, "NotJoinedUsersList"),
+    })
+}
+
+/// The group (slug, name) and forum (id, name) links of a forum or thread header.
+fn header_links(header: &str) -> ((String, String), (i64, String)) {
+    let mut group = (String::new(), String::new());
+    let mut forum = (0, String::new());
+    for (href, text) in anchors(header) {
+        let text = html_to_text(text).trim().to_string();
+        if let Some(slug) = query_value(&href, "group") {
+            if group.1.is_empty() {
+                group = (slug, text);
+            }
+        } else if let Some(id) = query_value(&href, "forum").and_then(|f| f.parse().ok()) {
+            forum = (id, text);
+        }
+    }
+    (group, forum)
+}
+
+pub fn parse_forum(html: &str) -> Option<ForumPage> {
+    let content = content_part(html);
+    let header = element_by_id(content, "GroupHeader")?;
+    let ((group_slug, group_name), _) = header_links(header);
+    let name = between(header, "<h3", "</h3>").and_then(|h| h.split_once('>').map(|x| html_to_text(x.1).trim().to_string()));
+    let threads = elements_with_class(content, "Forum_Thread")
+        .into_iter()
+        .filter_map(|(_, inner)| {
+            let links = anchors(inner);
+            let (href, title) = links.iter().find(|(h, _)| h.contains("thread.php?thread="))?;
+            let id = query_value(href, "thread")?.parse().ok()?;
+            let author =
+                links.iter().find(|(h, _)| h.starts_with("c/") || h.contains("/c/")).map(|(_, t)| html_to_text(t).trim().to_string());
+            let created = inner.rsplit_once("</a>").map(|x| tidy_text(x.1).join(" ")).unwrap_or_default();
+            Some(ThreadSummary {
+                id,
+                title: html_to_text(title).trim().to_string(),
+                author: author.unwrap_or_default(),
+                posts: between(inner, "Forum_ThreadPostCount\">", "<").and_then(|n| n.trim().parse().ok()).unwrap_or(0),
+                created,
+                last_post: between(inner, "Forum_LastPostInfo\">", "<").map(|t| html_to_text(&t).trim().to_string()).unwrap_or_default(),
+                locked: inner.contains("Forum_LockedThread"),
+                poll: inner.contains("Forum_Poll"),
+            })
+        })
+        .collect();
+    Some(ForumPage {
+        id: 0,
+        name: name.unwrap_or_default(),
+        group_id: input_value(content, "group_id").and_then(|v| v.parse().ok()).unwrap_or(0),
+        group_slug,
+        group_name,
+        threads,
+        can_post: content.contains("script_create_thread.php"),
+    })
+}
+
+pub fn parse_thread(html: &str) -> Option<ThreadPage> {
+    let content = content_part(html);
+    let header = element_by_id(content, "GroupHeader")?;
+    let ((group_slug, group_name), (forum_id, forum_name)) = header_links(header);
+    let subject = element_by_id(header, "Thread_Subject").map(|s| html_to_text(s).trim().to_string()).unwrap_or_default();
+    let posts = elements_with_class(content, "Thread_Post")
+        .into_iter()
+        .map(|(tag, inner)| {
+            let id = attr(tag, "id").and_then(|i| i.trim_start_matches("Thread_Post").parse().ok()).unwrap_or(0);
+            let meta = &inner[..inner.find("FormattedBlock").unwrap_or(inner.len())];
+            let after = meta.split_once("Posted ").map(|x| x.1).unwrap_or("");
+            let posted = after.split(" by ").next().map(|p| html_to_text(p).trim().to_string()).unwrap_or_default();
+            let author = after
+                .split_once(" by ")
+                .and_then(|x| anchors(x.1).into_iter().next())
+                .map(|(_, t)| html_to_text(t).trim().to_string())
+                .unwrap_or_default();
+            let body = elements_with_class(inner, "FormattedBlock").first().map(|(_, b)| bbcode_block(b)).unwrap_or_default();
+            ForumPost { id, author, posted, body }
+        })
+        .collect();
+    let mut pages: Vec<usize> = Vec::new();
+    let mut offset = 0;
+    if let Some((_, nav)) = elements_with_class(content, "Thread_Navigation").first() {
+        let mut from = 0;
+        while let Some((at, tag)) = next_tag(nav, from) {
+            from = at + 1;
+            if tag_name(tag) != "a" {
+                continue;
+            }
+            let rest = &nav[at + tag.len()..];
+            let label = rest[..rest.find('<').unwrap_or(rest.len())].trim();
+            let Some(off) = attr(tag, "href").and_then(|h| query_value(&h, "offset")).and_then(|o| o.parse::<usize>().ok()) else {
+                continue;
+            };
+            if !label.is_empty() && label.chars().all(|c| c.is_ascii_digit()) {
+                pages.push(off);
+                if attr(tag, "class").unwrap_or_default().contains("Thread_ActivePage") {
+                    offset = off;
+                }
+            }
+        }
+    }
+    pages.sort_unstable();
+    pages.dedup();
+    let reply = content.find("script_create_post.php").map(|i| &content[i..]).unwrap_or("");
+    Some(ThreadPage {
+        id: 0,
+        subject,
+        group_id: input_value(reply, "group_id").and_then(|v| v.parse().ok()).unwrap_or(0),
+        group_slug,
+        group_name,
+        forum_id: input_value(reply, "forum_id").and_then(|v| v.parse().ok()).unwrap_or(forum_id),
+        forum_name,
+        posts,
+        pages,
+        offset,
+        can_reply: !reply.is_empty(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1072,6 +1638,32 @@ mod tests {
         assert!(!news.is_empty() && count > 0);
         assert!(!site.personals().unwrap().is_empty());
         println!("{:?}", site.message_center("", 0).unwrap());
+        // Browse New and groups (reading only).
+        for newest in [false, true] {
+            let b = site.browse(newest, 0).unwrap();
+            assert!(b.characters.len() >= 10 && b.next == Some(BROWSE_PER_PAGE), "{b:?}");
+            assert!(b.characters.iter().any(|c| !c.info.is_empty()), "{b:?}");
+        }
+        let groups = site.groups().unwrap();
+        assert!(groups.len() > 50 && groups.iter().any(|g| g.slug == "f-chat"), "{}", groups.len());
+        let g = site.group("f-chat").unwrap();
+        assert!(g.id > 0 && !g.forums.is_empty() && !(g.joined.is_empty() && g.not_joined.is_empty()), "{g:?}");
+        let f = site.forum(g.forums[0].id).unwrap();
+        assert!(!f.threads.is_empty() && f.group_slug == "f-chat", "{f:?}");
+        let t = site.thread(f.threads[0].id, Some(0)).unwrap();
+        assert!(!t.posts.is_empty() && !t.subject.is_empty() && !t.pages.is_empty(), "{t:?}");
+        assert!(t.posts.iter().all(|p| !p.author.is_empty() && !p.posted.is_empty()), "{t:?}");
+        let last = site.thread(f.threads[0].id, None).unwrap();
+        assert_eq!(last.offset, *last.pages.last().unwrap());
+        println!(
+            "groups ok: {} groups, forum {} with {} threads, thread \"{}\" {} posts",
+            groups.len(),
+            f.name,
+            f.threads.len(),
+            t.subject,
+            t.posts.len()
+        );
+        assert!(site.group("no such group 12345").is_err());
         let bad = Site::new(crate::config::DEFAULT_API, &a, "wrong password");
         println!("bad login: {:?}", bad.note_folders().map(|_| ()));
     }

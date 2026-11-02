@@ -22,18 +22,22 @@ pub enum ImageMode {
     ColorAscii,
     /// Unicode half blocks with colours.
     Blocks,
+    /// Unicode Braille dots (2x4 per character), coloured.
+    Braille,
     /// Real pixels via the terminal's graphics protocol (kitty, iTerm2 or sixel).
     Native,
 }
 
 impl ImageMode {
-    pub const ALL: [ImageMode; 5] = [ImageMode::Off, ImageMode::Ascii, ImageMode::ColorAscii, ImageMode::Blocks, ImageMode::Native];
+    pub const ALL: [ImageMode; 6] =
+        [ImageMode::Off, ImageMode::Ascii, ImageMode::ColorAscii, ImageMode::Blocks, ImageMode::Braille, ImageMode::Native];
     pub fn name(self) -> &'static str {
         match self {
             ImageMode::Off => "off",
             ImageMode::Ascii => "ascii",
             ImageMode::ColorAscii => "colorascii",
             ImageMode::Blocks => "blocks",
+            ImageMode::Braille => "braille",
             ImageMode::Native => "native",
         }
     }
@@ -115,6 +119,8 @@ pub struct Settings {
     pub gui_columns: u16,
     pub gui_rows: u16,
     pub gui_inline_images: bool,
+    /// How the window shows images (`native` = real pixels).
+    pub gui_image_mode: ImageMode,
 
     // Images
     pub image_mode: ImageMode,
@@ -177,6 +183,7 @@ impl Default for Settings {
             gui_columns: 120,
             gui_rows: 45,
             gui_inline_images: true,
+            gui_image_mode: ImageMode::Native,
             image_mode: ImageMode::Blocks,
             graphics_protocol: GraphicsProtocol::Auto,
             inline_images: false,
@@ -242,7 +249,12 @@ pub const SETTINGS: &[SettingInfo] = &[
     SettingInfo { key: "gui_rows", help: "GUI version: window height in rows (remembered)" },
     #[cfg(feature = "gui")]
     SettingInfo { key: "gui_inline_images", help: "GUI version: show icons/eicons as images under messages" },
-    SettingInfo { key: "image_mode", help: "Image display: off, ascii, colorascii, blocks, native" },
+    #[cfg(feature = "gui")]
+    SettingInfo {
+        key: "gui_image_mode",
+        help: "GUI version: image display: off, ascii, colorascii, blocks, braille, native (= real pixels)",
+    },
+    SettingInfo { key: "image_mode", help: "Image display: off, ascii, colorascii, blocks, braille, native" },
     SettingInfo { key: "graphics_protocol", help: "Native image protocol: auto, kitty, iterm2, sixel" },
     SettingInfo { key: "inline_images", help: "Show icons/eicons as small images under messages" },
     SettingInfo { key: "inline_image_rows", help: "Height of inline images in rows" },
@@ -266,6 +278,23 @@ pub const SETTINGS: &[SettingInfo] = &[
 ];
 
 impl Settings {
+    /// The image mode in use: the window's own in the GUI version.
+    pub fn active_image_mode(&self) -> ImageMode {
+        if crate::images::pixel_output().is_some() {
+            self.gui_image_mode
+        } else {
+            self.image_mode
+        }
+    }
+
+    pub fn set_active_image_mode(&mut self, m: ImageMode) {
+        if crate::images::pixel_output().is_some() {
+            self.gui_image_mode = m;
+        } else {
+            self.image_mode = m;
+        }
+    }
+
     fn path() -> PathBuf {
         paths::config_dir().join("settings.toml")
     }

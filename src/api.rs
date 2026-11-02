@@ -239,7 +239,9 @@ impl Api {
             friends: v
                 .get("friendlist")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().map(|f| (vs(f, "source"), vs(f, "dest"), vi(f, "last_online"))).collect())
+                // "source" is your character, "dest" the friend (the login
+                // ticket's list has it the other way round).
+                .map(|a| a.iter().map(|f| (vs(f, "dest"), vs(f, "source"), vi(f, "last_online"))).collect())
                 .unwrap_or_default(),
             incoming: reqs("requestlist"),
             pending: reqs("requestpending"),

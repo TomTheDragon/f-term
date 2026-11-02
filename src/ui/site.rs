@@ -32,6 +32,11 @@ pub enum SiteReply {
     News(usize, Result<(Vec<NewsPost>, i64), String>),
     Personals(Result<Vec<Personal>, String>),
     Groups(String, Result<Vec<String>, String>),
+    Browse { newest: bool, offset: usize, result: Result<crate::site::BrowsePage, String> },
+    GroupList(Result<Vec<crate::site::GroupSummary>, String>),
+    Group(String, Result<crate::site::Group, String>),
+    Forum(i64, Result<crate::site::ForumPage, String>),
+    Thread(i64, Result<crate::site::ThreadPage, String>),
     Done { what: String, result: Result<(), String>, refresh: Refresh },
 }
 
@@ -43,6 +48,10 @@ pub enum Refresh {
     NotesList,
     Messages,
     Guestbook(String),
+    /// Reload a group (slug), forum or a thread's last page.
+    Group(String),
+    Forum(i64),
+    ThreadLast(i64),
 }
 
 /// Prompts used by the website features. The prompt's `extra` holds the context.
@@ -62,6 +71,12 @@ pub enum SitePrompt {
     FolderRename,
     /// extra: character
     Guestbook,
+    /// extra: "group_id forum_id thread_id"
+    GroupReply,
+    /// extra: "group_id forum_id"
+    ThreadSubject,
+    /// extra: "group_id forum_id\nsubject"
+    ThreadBody,
 }
 
 /// Menu actions of the website features.
@@ -76,6 +91,7 @@ pub enum SiteAction {
     TrashMessages(String),
     GuestbookPost { character: String, private: bool, text: String },
     ComposeNote(String),
+    JoinGroup { group_id: i64, character_id: i64, character: String, slug: String, join: bool },
 }
 
 pub struct NotesState {
@@ -208,7 +224,7 @@ impl App {
         self.api_call(move |api| ApiReply::Site(f(api)));
     }
 
-    fn site_do<F>(&mut self, what: &str, refresh: Refresh, f: F)
+    pub(super) fn site_do<F>(&mut self, what: &str, refresh: Refresh, f: F)
     where
         F: FnOnce(&crate::api::Api) -> Result<(), String> + Send + 'static,
     {
@@ -267,7 +283,7 @@ impl App {
         }
     }
 
-    fn set_prompt_extra(&mut self, extra: &str) {
+    pub(super) fn set_prompt_extra(&mut self, extra: &str) {
         if let Some(Dialog::Prompt(p)) = self.dialogs.last_mut() {
             p.extra = extra.to_string();
         }
@@ -449,6 +465,11 @@ impl App {
                     }
                 }
             }
+            r @ (SiteReply::Browse { .. }
+            | SiteReply::GroupList(_)
+            | SiteReply::Group(..)
+            | SiteReply::Forum(..)
+            | SiteReply::Thread(..)) => self.on_groups_reply(r),
             SiteReply::Done { what, result, refresh } => match result {
                 Ok(()) => {
                     self.flash(&what);
@@ -471,6 +492,7 @@ impl App {
                             };
                             self.load_messages(&cat, offset);
                         }
+                        r @ (Refresh::Group(_) | Refresh::Forum(_) | Refresh::ThreadLast(_)) => self.groups_refresh(r),
                         Refresh::Guestbook(name) => {
                             let mut page = None;
                             for d in self.dialogs.iter_mut() {
@@ -490,6 +512,10 @@ impl App {
                 Err(e) => {
                     self.flash(&format!("Failed: {e}"));
                     self.info(&format!("{what} failed: {e}"));
+                    // Show the forum or thread as it is now, in case the post went through anyway.
+                    if matches!(refresh, Refresh::Forum(_) | Refresh::ThreadLast(_)) {
+                        self.groups_refresh(refresh);
+                    }
                 }
             },
         }
@@ -508,8 +534,12 @@ impl App {
     // Prompts and menu actions
 
     pub(super) fn on_site_prompt(&mut self, kind: SitePrompt, value: String, extra: String) {
+        if matches!(kind, SitePrompt::GroupReply | SitePrompt::ThreadSubject | SitePrompt::ThreadBody) {
+            return self.on_groups_prompt(kind, value, extra);
+        }
         let v = value.trim().to_string();
         match kind {
+            SitePrompt::GroupReply | SitePrompt::ThreadSubject | SitePrompt::ThreadBody => {}
             SitePrompt::NoteTo => {
                 if !v.is_empty() {
                     self.compose_note(&v);
@@ -619,6 +649,7 @@ impl App {
                 });
             }
             SiteAction::ComposeNote(to) => self.compose_note(&to),
+            a @ SiteAction::JoinGroup { .. } => self.run_groups_action(a),
         }
     }
 
@@ -967,6 +998,7 @@ impl App {
                     };
                     let lines = widgets::wrap_all(&lines, body.width as usize, 0);
                     let s = n.scroll.min(lines.len().saturating_sub(body.height as usize));
+                    widgets::note_text(&lines, s);
                     for (i, l) in lines.iter().skip(s).take(body.height as usize).enumerate() {
                         buf.set_line(body.x, body.y + i as u16, l, body.width);
                     }

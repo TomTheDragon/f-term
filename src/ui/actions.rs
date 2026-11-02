@@ -32,6 +32,10 @@ pub enum Action {
     DeleteAd(usize),
     InsertText(String),
     FriendRequestAction(String, String),
+    /// A friend (theirs, mine) in the friends list.
+    FriendOf(String, String),
+    /// Remove a friendship of one of your characters: (mine, theirs).
+    UnfriendAs(String, String),
     Site(super::site::SiteAction),
 }
 
@@ -46,6 +50,8 @@ pub enum PromptKind {
     Command,
     SaveSetting,
     Find,
+    /// Search in the window below the prompt.
+    DialogFind,
     Site(super::site::SitePrompt),
 }
 
@@ -370,6 +376,10 @@ impl App {
                 let st = self.my_status.label();
                 self.info(&format!("You are {me} (account {account}), status {st}."));
             }
+            "version" => {
+                let v = crate::protocol::CLIENT_VERSION;
+                self.info(&format!("F-Term v{v} ({}, TLS: {})", std::env::consts::OS, crate::tls::backend_name()));
+            }
             "users" => {
                 let m = self.chat.sorted_members(self.chat.active_conv());
                 self.info(&format!("{} members: {}", m.len(), m.join(", ")));
@@ -439,6 +449,11 @@ impl App {
                 self.open_news(page - 1);
             }
             "personals" => self.open_personals(rest),
+            "browse" => {
+                let newest = matches!(rest.trim().to_lowercase().as_str(), "new" | "newest" | "created" | "recent");
+                self.open_browse(newest);
+            }
+            "groups" => self.open_groups(rest),
             "logsearch" => {
                 let me = self.chat.me.clone();
                 if me.is_empty() {
@@ -498,12 +513,12 @@ impl App {
             }
             "images" => match ImageMode::parse(rest) {
                 Some(m) => {
-                    self.settings.image_mode = m;
+                    self.settings.set_active_image_mode(m);
                     self.save_settings();
                     self.settings_changed();
                     self.info(&format!("Images: {}", m.name()));
                 }
-                None => self.info("Usage: /images <off|ascii|colorascii|blocks|native>"),
+                None => self.info("Usage: /images <off|ascii|colorascii|blocks|braille|native>"),
             },
             "avatar" => {
                 let who = if rest.is_empty() { partner.clone().unwrap_or_else(|| self.chat.me.clone()) } else { rest.to_string() };
@@ -846,7 +861,7 @@ impl App {
     }
 
     pub fn show_image(&mut self, title: &str, url: &str) {
-        if self.settings.image_mode == ImageMode::Off {
+        if self.settings.active_image_mode() == ImageMode::Off {
             self.info("Images are turned off. Use /images blocks (or ascii/native) to enable them.");
             return;
         }
@@ -931,6 +946,19 @@ impl App {
         self.dialogs.push(Dialog::menu(&header, items));
     }
 
+    /// The user menu of a friend of one of your characters: removing the
+    /// friend ends that character's friendship.
+    pub fn open_friend_menu(&mut self, theirs: &str, mine: &str) {
+        self.open_user_menu(theirs);
+        if let Some(Dialog::Menu { items, .. }) = self.dialogs.last_mut() {
+            for item in items.iter_mut() {
+                if matches!(item.action, Action::Unfriend(_) | Action::FriendRequest(_)) {
+                    *item = MenuItem::new(&format!("Remove friend (of {mine})"), Action::UnfriendAs(mine.to_string(), theirs.to_string()));
+                }
+            }
+        }
+    }
+
     pub fn prompt(&mut self, title: &str, initial: &str, kind: PromptKind, multiline: bool) {
         self.dialogs.push(Dialog::prompt(title, initial, kind, multiline));
     }
@@ -975,6 +1003,7 @@ impl App {
                 }
             }
             PromptKind::Find => self.find_start(&v),
+            PromptKind::DialogFind => self.dialog_find_start(&v),
             PromptKind::Site(k) => self.on_site_prompt(k, value, extra),
             PromptKind::Command => {
                 if !v.is_empty() {
@@ -1071,6 +1100,18 @@ impl App {
                 self.input.insert_str(&t);
                 self.focus = Focus::Input;
             }
+            Action::FriendOf(theirs, mine) => self.open_friend_menu(&theirs, &mine),
+            Action::UnfriendAs(mine, theirs) => {
+                let (Some(api), tx) = (self.api.clone(), self.tx.clone()) else { return self.flash("Not logged in.") };
+                std::thread::spawn(move || {
+                    let r = api.friend_remove(&mine, &theirs);
+                    let ok = r.is_ok();
+                    let _ = tx.send(super::AppEvent::Api(ApiReply::Done(format!("{mine} and {theirs} are no longer friends."), r)));
+                    if ok {
+                        let _ = tx.send(super::AppEvent::Api(ApiReply::FriendLists(api.friend_lists())));
+                    }
+                });
+            }
             Action::FriendRequestAction(action, id) => {
                 let (a, i) = (action.clone(), id.clone());
                 self.api_call(move |api| ApiReply::Done(format!("Friend request: {a} done."), api.request_action(&a, &i)));
@@ -1146,6 +1187,9 @@ impl App {
                         }
                     }
                 }
+            }
+            ApiReply::CharCard(name, r) => {
+                self.char_cards.insert(name.to_lowercase(), Some(r.map(std::sync::Arc::new)));
             }
             ApiReply::CharFriends(name, r) => {
                 for d in self.dialogs.iter_mut() {

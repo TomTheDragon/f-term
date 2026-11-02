@@ -543,6 +543,8 @@ pub(super) enum Shape {
     Block(u8, u8, u8, u8),
     /// Shade with this many quarters of the foreground colour.
     Shade(u32),
+    /// Braille dots (the bits of U+2800 + n).
+    Braille(u8),
 }
 
 fn shape_of(c: char) -> Option<Shape> {
@@ -599,6 +601,7 @@ fn shape_of(c: char) -> Option<Shape> {
         0x2593 => Some(Shape::Shade(3)),
         0x2594 => Some(Shape::Block(0, 8, 0, 1)),
         0x2595 => Some(Shape::Block(7, 8, 0, 8)),
+        n @ 0x2800..=0x28FF => Some(Shape::Braille((n - 0x2800) as u8)),
         _ => None,
     }
 }
@@ -623,6 +626,20 @@ pub(super) fn draw_shape(shape: Shape, fg: u32, bg: u32, r: PxRect, fill: &mut d
             fill(PxRect { left: px(x0), right: px(x1), top: py(y0), bottom: py(y1) }, fg);
         }
         Shape::Shade(q) => fill(r, blend(fg, bg, q)),
+        Shape::Braille(bits) => {
+            // 2 columns x 4 rows of square dots.
+            const BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
+            let d = (w / 4).min(h / 8).max(1);
+            for (row, rb) in BITS.iter().enumerate() {
+                for (col, b) in rb.iter().enumerate() {
+                    if bits & b != 0 {
+                        let cx = r.left + w * (1 + 2 * col as i32) / 4;
+                        let cy = r.top + h * (1 + 2 * row as i32) / 8;
+                        fill(PxRect { left: cx - d / 2, top: cy - d / 2, right: cx - d / 2 + d, bottom: cy - d / 2 + d }, fg);
+                    }
+                }
+            }
+        }
         Shape::Lines(arms) => {
             let t = (w / 8).max(1);
             let cx = r.left + (w - t) / 2;
@@ -775,6 +792,13 @@ mod tests {
         assert_eq!(shape_of('╭'), Some(Shape::Lines([0, 1, 1, 0])));
         assert_eq!(shape_of('▄'), Some(Shape::Block(0, 8, 4, 8)));
         assert_eq!(shape_of('▌'), Some(Shape::Block(0, 4, 0, 8)));
+        assert_eq!(shape_of('⣿'), Some(Shape::Braille(0xff)));
+        let mut dots = 0;
+        draw_shape(Shape::Braille(0x41), 1, 0, PxRect { left: 0, top: 0, right: 8, bottom: 16 }, &mut |r, _| {
+            assert!(r.left >= 0 && r.right <= 8 && r.top >= 0 && r.bottom <= 16 && r.right > r.left);
+            dots += 1;
+        });
+        assert_eq!(dots, 2);
         assert_eq!(shape_of('a'), None);
         let mut n = 0;
         draw_shape(Shape::Lines([1, 1, 1, 1]), 1, 0, PxRect { left: 0, top: 0, right: 8, bottom: 16 }, &mut |r, _| {

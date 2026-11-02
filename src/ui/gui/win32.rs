@@ -326,6 +326,9 @@ thread_local! {
     static STATE: RefCell<Option<WinState>> = const { RefCell::new(None) };
 }
 
+/// The window title with the version, as a C string.
+const WINDOW_TITLE: &[u8] = concat!("F-Term ", env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+
 fn create_font(face: &str, size: i32, bold: bool, italic: bool) -> Handle {
     let mut name: Vec<u8> = face.bytes().take(31).collect();
     name.push(0);
@@ -428,8 +431,20 @@ fn window_thread(screen: Shared, tx: Sender<Event>, choice: GuiConfig, ready: Se
                 y = work.top;
             }
         }
-        let hwnd =
-            CreateWindowExA(0, class, c"F-Term".as_ptr().cast(), WS_OVERLAPPEDWINDOW, x, y, w, h, null_mut(), null_mut(), inst, null_mut());
+        let hwnd = CreateWindowExA(
+            0,
+            class,
+            WINDOW_TITLE.as_ptr().cast(),
+            WS_OVERLAPPEDWINDOW,
+            x,
+            y,
+            w,
+            h,
+            null_mut(),
+            null_mut(),
+            inst,
+            null_mut(),
+        );
         if hwnd.is_null() {
             let _ = ready.send(Err("could not create the window".into()));
             return;

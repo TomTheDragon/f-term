@@ -20,7 +20,7 @@ have them).
 | | |
 |---|---|
 | ![The chat in a terminal, images as blocks](docs/screenshots/chat-blocks.png) | ![Compact layout for an 80x25 console](docs/screenshots/console-80x25.png) |
-| The same chat in a terminal (block images, `/set inline_images on`) | Compact layout for 80x25 consoles (Windows 9x) |
+| The same chat in a terminal (block images, `/set inline_images on`) | Compact layout for screens up to 80 columns (here the 80x25 Windows 9x console) |
 | ![Profile overview in the GUI version](docs/screenshots/profile.png) | ![Profile overview in a terminal](docs/screenshots/profile-blocks.png) |
 | Profile with the kink match (GUI) | The same in a terminal |
 | ![Profile images in the GUI version](docs/screenshots/profile-images.png) | ![Profile images in a terminal](docs/screenshots/profile-images-blocks.png) |
@@ -81,6 +81,11 @@ made again with `cargo test --features gui -- --ignored screenshots`.
   - `ascii`: plain ASCII art, works on any terminal.
   - `colorascii`: coloured ASCII art.
   - `blocks`: coloured Unicode half-blocks. This is the default.
+  - `braille`: coloured Unicode Braille dots, 2x4 dots per character, for
+    finer detail (needs a font with Braille characters).
+
+  The GUI versions have their own setting, `gui_image_mode`: `native`
+  (the default) shows real pixels, the other modes look as in a terminal.
   - `native`: real pixels via the **kitty**, **iTerm2** or **sixel** graphics
     protocol, detected automatically or forced with `graphics_protocol`.
 
@@ -117,8 +122,19 @@ made again with `cargo test --features gui -- --ignored screenshots`.
   - **News** (`/news [page]`): F-List's news posts.
   - **Roleplay ads** (`/personals [filter]`): the ads from the F-List front
     page, filterable by any text, with the full ad below the list.
+  - **Browse New** (**Alt+U**, `/browse`): the website's new and updated
+    characters, or with Tab (`/browse new`) the recently created ones, with
+    their details and avatar. PgUp/PgDn pages through 20 at a time.
+  - **Groups** (**Alt+G**, `/groups [name]`): all F-List groups (yours
+    first), filterable by any text. Open a group to see its forums, a forum
+    to see its threads, and a thread to read its posts page by page. Reply
+    to a thread (**r**), start a new one (**n**), and join or leave a group
+    with any of your characters (**J** / **L**).
 - **Friends and bookmarks** (**F3**): lists with online status, accept, deny or
-  cancel friend requests, bookmark, unbookmark, unfriend. The console tab shows
+  cancel friend requests, bookmark, unbookmark, unfriend. Friends are listed
+  in a section for each of your characters. Select an entry (also your own
+  characters) to see their details at the right: status, avatar and profile
+  fields. The console tab shows
   who of them is online, with their status, at the top right
   (`show_online_friends`, on by default). With `notify_online` set to
   `friends`, `bookmarks` or `both` (off by default), a box at the top right
@@ -152,6 +168,8 @@ made again with `cargo test --features gui -- --ignored screenshots`.
   users, online friends, list entries, login fields and any key hint (like the
   F-keys in the status bar or the keys under dialogs); scroll messages and lists
   with the wheel, or switch tabs by scrolling over the tab list.
+- **Version**: shown on the login screen, in the console tab, in the help
+  (F1) and the window title, and with `/version`.
 - **Copy and paste**: in a terminal, use the terminal's own copy and paste
   (with mouse support on, hold Shift to select). Pasted text goes into the
   input line or the open dialog. The GUI versions select with the mouse and copy
@@ -185,7 +203,8 @@ f-term --window           # GUI builds: open a window
 f-term --terminal         # Linux/macOS GUI builds: run in the terminal
 ```
 
-Press **F1** in the app for all keys and commands. The most important ones:
+Press **F1** in the app for all keys and commands (F1 help and F6 settings
+open on top of any window). The most important ones:
 
 | Key | Action |
 | --- | --- |
@@ -197,10 +216,12 @@ Press **F1** in the app for all keys and commands. The most important ones:
 | Alt+J / Alt+P | Join a channel / open a private chat by name |
 | Ctrl+F | Search the current tab |
 | Alt+N / Alt+M | F-List notes / site messages |
+| Alt+U / Alt+G | F-List new/updated characters / groups |
 | Alt+E | Eicon picker |
 | Ctrl+O | Move focus to the member list (Enter opens the user menu) and the tab list |
 | PgUp / PgDn | Scroll |
 | F2 … F8 | Channels, friends, profile, status, settings, logs, search |
+| Ctrl+F in a window | Find text in any list or view: Ctrl+F next, Ctrl+G previous, Esc ends |
 | Ctrl+Q | Quit |
 
 Commands with several arguments use commas, e.g. `/timeout Some Name, 30`.
@@ -235,9 +256,10 @@ cargo build --release
 
 The `*-gui` builds (cargo feature `gui`) draw the same screen in an own window
 instead of a terminal (`src/ui/gui/`). The window can be any size, colours
-aren't limited, and box-drawing and block characters are drawn as shapes, so
-they line up with any font. Images (avatars, eicons, profile pictures) are shown
-as real pixels whatever `image_mode` is set to (except `off`), and icons/eicons
+aren't limited, and box-drawing, block and Braille characters are drawn as
+shapes, so they line up with any font. Images (avatars, eicons, profile
+pictures) are shown as real pixels (`gui_image_mode` = `native`, the default;
+the other modes draw them with characters as in a terminal), and icons/eicons
 under messages are on by default (`gui_inline_images`).
 
 - Windows (95 to 11) draws with GDI and the system fonts (`gui/win32.rs`).
@@ -284,6 +306,12 @@ scripts/build-all.sh linux-i586 windows-i686   # selected targets
 
 The Linux GUI builds use `x86_64`/`i586-unknown-linux-gnu.2.17` instead of musl:
 they need glibc 2.17 or newer and load the X11 or Wayland libraries at run time.
+
+The plain Linux builds are kept small: they use the system's CA certificates
+(`system-certs`) and the GUI builds the system's DejaVu Sans Mono, or another
+monospace font through fontconfig (`system-fonts`), instead of built-in
+copies. They also abort on panics and are optimized for size. The packages
+and the AppImage are built separately (see [Linux packages](#linux-packages)).
 The macOS GUI builds need Apple's macOS SDK for AppKit: set `SDKROOT` to a
 `MacOSX.sdk` folder, or build on a Mac; without it `build-all.sh` skips them.
 
@@ -380,8 +408,8 @@ On Windows 9x/ME the computer also needs:
 
 Only `ascii`/`blocks` image modes make sense in the 9x console.
 
-The console build (`narrow-console` feature) uses a compact layout on screens
-of 80 columns or less: a narrower tab list with a single separator line, and an
+On screens of 80 columns or less (like the 9x console), every version uses
+a compact layout: a narrower tab list with a single separator line, and an
 input box without side borders. For more room, use the GUI version.
 
 The GUI version `f-term-windows-9x-gui.exe` needs the same files as the
@@ -416,9 +444,9 @@ Protocol references:
 - [F-Chat error codes](https://wiki.f-list.net/F-Chat_Error_Codes)
 - [F-List JSON API](https://toys.in.newtsin.space/api-docs/)
 
-The website features (notes, site messages, news, roleplay ads, groups,
-guestbook posts) use the website's own JSON endpoints, as its pages do
-(`src/site.rs`). To test them against the real site with a test account:
+The website features (notes, site messages, news, roleplay ads, Browse New,
+groups, guestbook posts) use the website's own JSON endpoints and pages, as
+a browser does (`src/site.rs`). To test them against the real site with a test account:
 
 ```
 FLIST_TEST_ACCOUNT=… FLIST_TEST_PASSWORD=… cargo test -- --ignored site_live

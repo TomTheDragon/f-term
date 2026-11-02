@@ -31,6 +31,54 @@ const MESSAGES_PAGE: &str = r#"<html><head><meta name="csrf-token" content="tok1
 <div class='Messagecenter_Message MessagesGroupcharacterupdate' id='Messagecenter_Message56'><a class='ImageLink Messagecenter_Deletelink' id='Messagecenter_Deletelink56' onclick='FList.Messages_delete(56);'>Delete</a><span class='message-summary'><a onclick="x">"Fresh look", 2h ago</a> by <a href='c/friendo/'>Friendo</a></span></div><div class='message-expanded FormattedBlock' id='message-expanded-56' style='display:none;'>V:2 D&gt;:+10 AU</div>
 </td><a name="bottom-of-page"></a></body></html>"#;
 
+/// Website pages for "Browse New" and groups (layout of the real ones, names made up).
+const SITE_HEAD: &str = r#"<html><head><meta name="csrf-token" content="tok123"></head><body>
+<a href="https://www.f-list.net/action/script_logout.php" id="NavigationLogout">Logout</a><table id="Page"><tr><td id="Content">"#;
+const SITE_FOOT: &str = r#"</td></tr></table><a name="bottom-of-page"></a></body></html>"#;
+const BROWSE_PAGE: &str = r#"<h2>New/Updated characters</h2>
+<table class='content-navigation'><tr><td class='list-highlight'><a class='next' href="?offset=20&type=edited">Next 20</a></td></tr></table>
+<a href="c/sky dancer" class="ListedCharacter"><img src="https://static.f-list.net/images/avatar/sky dancer.png"/>
+  <span class='ImageLink CharacterLink ResultListingName'>Sky Dancer</span><br />
+  <span class='CharacterBrowseInfo'><strong>Age:</strong> 27</span> <span class='CharacterBrowseInfo'><strong>Gender:</strong> Female</span>
+  <span class='CharacterBrowseInfo'><strong>Species:</strong> Snow &amp; Ice Fox</span></a>
+<a href="c/plain jane" class="ListedCharacter"><img src="x.png"/><span class='ImageLink CharacterLink ResultListingName'>Plain Jane</span><br /></a>"#;
+const GROUP_LIST_PAGE: &str = r#"<h3>Joined groups</h3><select id="GroupJumpLabel"><option></option><option value="night owls">Night Owls</option></select>
+<div id="BrowseGroupList"><div class='ListedGroup ResultListing' rel='10'><table class='ListedGroupTable'><tr><td class='ListedGroupAvatar'>
+<a href='group.php?group=writers guild'><img src='x.png'/></a></td><td class='ListedGroupDescription'>
+<p><a href='group.php?group=writers guild'>Writers Guild</a><br/><div class='FormattedBlock'>For [b]writers[/b] &amp; readers.</div></p>
+</td><td class='ListedGroupStats Rounded LightPanel'>Owner: <a href='c/inkwell' class='ImageLink CharacterLink'>Inkwell</a><br/>
+Posts: 120<br/>Members: 45<br/>Last post: 2d ago<br/></td></tr></table></div>
+<div class='ListedGroup ResultListing' rel='5'><table class='ListedGroupTable'><tr><td class='ListedGroupDescription'>
+<p><a href='group.php?group=night owls'>Night Owls</a><br/><div class='FormattedBlock'>Late chats.</div></p>
+</td><td class='ListedGroupStats'>Posts: 5<br/>Members: 3<br/>Last post: 1w ago<br/></td></tr></table></div></div>"#;
+const GROUP_PAGE: &str = r#"<div id="GroupHeader"><img src="x.png" class="GroupAvatar" /><h3 style="margin:0px;">Writers Guild</h3>
+<div class='FormattedBlock'>For [b]writers[/b] &amp; readers.</div><div class="footer">
+<a class="ImageLink" id="GroupMembersLink" href="group_members.php?group_id=300">Members/Owner/Mods</a></div></div>
+<div class="GroupForum"><div style="float:right;">12 posts in 3 threads<br/>Last post by <a href="c/Inkwell">Inkwell</a><br/>
+in <a href="thread.php?thread=900&offset=last">Prompts [...]</a><br/>2d ago <br/></div>
+<a href="forum.php?forum=55">Story prompts</a><br/><div class="FormattedBlock">Share your ideas.</div></div>
+<select id="UsersList" style="display:none;"><option value="1">Tester</option><option value="2">Alt Char</option></select>
+<select id="JoinedUsersList" style="display:none;"><option></option><option value="2">Alt Char</option></select>
+<select id="NotJoinedUsersList" style="display:none;"><option></option><option value="1">Tester</option></select>"#;
+const FORUM_PAGE: &str = r#"<div id="GroupHeader"><a href="group.php?group=writers guild"><img src="x.png"/></a>
+<a href="group.php?group=writers guild">Writers Guild</a> -&gt; Story prompts <h3>Story prompts</h3>Share your ideas.</div>
+<div class="Forum_Thread  "> <span class="Forum_ThreadPostCount">2</span><span class="Forum_LastPostInfo">2d ago</span>
+  <a href="thread.php?thread=900">Prompts for October</a> by <a href="c/Inkwell" class="CharacterLink ImageLink">Inkwell</a> 1w ago </div>
+<div class="Forum_Thread  "> <span class="Forum_LockedThread"></span> <span class="Forum_ThreadPostCount">1</span><span class="Forum_LastPostInfo">1y ago</span>
+  <a href="thread.php?thread=901">Rules</a> by <a href="c/Inkwell" class="CharacterLink ImageLink">Inkwell</a> 1y ago </div>
+<h2>Create Thread</h2><form class="StyledForm" action="action/script_create_thread.php" method="post">
+<input type="hidden" name="csrf_token" value="tok123"/><input type="hidden" name="group_id" value="300" /><input type="hidden" name="forum_id" value="55" /></form>"#;
+const THREAD_PAGE: &str = r#"<div id="GroupHeader"><a href="group.php?group=writers guild">Writers Guild</a> -> <a href="forum.php?forum=55">Story prompts</a> -> Prompts
+<h3><span id="Thread_Subject">Prompts for October</span></h3>Thread created 1w ago by <a href='c/Inkwell'>Inkwell</a></div>
+<div class="Thread_Navigation"><a href="thread.php?thread=900&offset=0">First</a> | <a href='thread.php?thread=900&offset=0' class='Thread_ActivePage'>1</a> |
+<a href='thread.php?thread=900&offset=25'>2</a> | <a href="thread.php?thread=900&offset=25">Last</a></div>
+<a name="post_1"></a><div class="Thread_Post" id="Thread_Post71"><a href='c/Inkwell'><img src="x.png" class="Thread_Avatar"/></a>
+*Posted 1w ago by <a class='CharacterLink ImageLink' href='c/Inkwell'>Inkwell</a><br/><div class="FormattedBlock">A [i]haunted[/i] lighthouse.
+Second line &amp; more.</div></div>
+<div class="Thread_Post" id="Thread_Post72">Posted 2d ago by <a class='CharacterLink ImageLink' href='c/Friendo'>Friendo</a><br/><div class="FormattedBlock">I'm in!</div></div>
+<form class="StyledForm" action="action/script_create_post.php" method="post"><input type="hidden" name="csrf_token" value="tok123"/>
+<input type="hidden" name="group_id" value="300"/><input type="hidden" name="thread_id" value="900"/><input type="hidden" name="forum_id" value="55"/></form>"#;
+
 fn http_server() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
@@ -82,6 +130,19 @@ fn handle_http(s: TcpStream) {
             Some(("200 OK", "application/json", String::new(), json!({"error": "You have to be logged in."}).to_string()))
         }
         "/messages.php" => Some(html(MESSAGES_PAGE)),
+        "/character_browse.php" | "/group_browse.php" | "/group.php" | "/forum.php" | "/thread.php" => {
+            let page = match route.as_str() {
+                "/character_browse.php" => BROWSE_PAGE,
+                "/group_browse.php" => GROUP_LIST_PAGE,
+                "/group.php" => GROUP_PAGE,
+                "/forum.php" => FORUM_PAGE,
+                _ => THREAD_PAGE,
+            };
+            Some(html(&format!("{SITE_HEAD}{page}{SITE_FOOT}")))
+        }
+        "/action/script_create_post.php" | "/action/script_create_thread.php" if body.contains("csrf_token=tok123") => {
+            Some(("302 Found", "text/html", "Location: /thread.php?thread=900&offset=last\r\n".into(), String::new()))
+        }
         "/view_note.php" => Some(html(
             "<a href='/action/script_logout.php'>Logout</a><h2 id='Note_PageHeader' style=''>Hello there</h2>Sent 5m ago, by <a href='https://www.f-list.net/c/Friendo/'>Friendo</a> \
              to <a href='https://www.f-list.net/c/Tester/'>Tester</a><br/><br/><div class='FormattedBlock' style=''>[b]Hi[/b] Tester,\nline two &amp; more</div></div>\
@@ -120,7 +181,8 @@ fn handle_http(s: TcpStream) {
                         json!({"error": "Login failed."})
                     } else {
                         json!({"ticket": "tkt", "characters": {"Tester": 1, "Alt Char": 2}, "default_character": 1,
-                               "friends": [{"dest_name": "Tester", "source_name": "Friendo"}], "bookmarks": [{"name": "Booky"}], "error": ""})
+                               "friends": [{"dest_name": "Tester", "source_name": "Friendo"}, {"dest_name": "Alt Char", "source_name": "Pal"}],
+                               "bookmarks": [{"name": "Booky"}, {"name": "Friendo"}], "error": ""})
                     }
                 }
                 "/json/api/mapping-list.php" => json!({
@@ -135,7 +197,8 @@ fn handle_http(s: TcpStream) {
                     "created_at": 1600000000, "updated_at": 1700000000, "badges": [],
                     "kinks": {"1": "fave"}, "custom_kinks": {}, "infotags": {"3": "9"}, "images": [], "error": ""}),
                 "/json/api/friend-bookmark-lists.php" => {
-                    json!({"bookmarklist": ["Booky"], "friendlist": [{"source": "Friendo", "dest": "Tester", "last_online": 0}],
+                    json!({"bookmarklist": ["Booky", "Friendo"], "friendlist": [{"source": "Tester", "dest": "Friendo", "last_online": 0},
+                        {"source": "Alt Char", "dest": "Pal", "last_online": 0}],
                     "requestlist": [{"id": "77", "source": "Stranger", "dest": "Tester"}], "requestpending": [], "error": ""})
                 }
                 _ => json!({"error": ""}),
@@ -338,9 +401,7 @@ fn end_to_end() {
     assert!(s.contains("Online (2)") && s.contains("Friendo") && s.contains("Looking") && s.contains("Booky"), "{s}");
     // The header doesn't repeat the count while the panel is shown.
     assert!(s.contains("3 users online") && !s.contains("bookmarks/friends online"), "{s}");
-    app.narrow_console = true;
     show(&screen(&mut app, 80, 25));
-    app.narrow_console = false;
 
     // Mouse support (off by default): clicking a key hint presses the key,
     // clicking a friend opens the user menu.
@@ -420,11 +481,9 @@ fn end_to_end() {
     assert!(app.toasts.is_empty());
     app.settings.notify_online = crate::config::WatchNotify::Off;
     // Compact layout of the Windows 9x console build.
-    app.narrow_console = true;
     let s = screen(&mut app, 80, 25);
     show(&s);
     assert!(s.contains("2 # Frontpage") && s.contains("You joined Frontpage"), "{s}");
-    app.narrow_console = false;
 
     // Name completion in normal text.
     type_text(&mut app, "hi Fri");
@@ -493,9 +552,47 @@ fn end_to_end() {
     assert!(screen(&mut app, 120, 40).contains("Hugging"));
     key(&mut app, KeyCode::Esc);
 
-    // Friends dialog.
+    // Friends dialog: a section per own character, the friend's name first.
     key(&mut app, KeyCode::F(3));
     pump(&mut app, 400);
+    let s = screen(&mut app, 120, 30);
+    show(&s);
+    let line = |s: &str, what: &str| s.lines().position(|l| l.contains(what)).unwrap_or_else(|| panic!("{what} missing: {s}"));
+    assert!(line(&s, "Tester · 1 friend") < line(&s, "Friendo  Up for RP"), "{s}");
+    assert!(line(&s, "Friendo  Up for RP") < line(&s, "Alt Char · 1 friend") && line(&s, "Alt Char · 1") < line(&s, "  Pal"), "{s}");
+    assert!(!s.contains("friend of"), "{s}");
+    // The refreshed lists keep Friendo a friend, though also bookmarked.
+    assert!(app.chat.is_friend("Friendo") && app.chat.is_bookmarked("Friendo") && !app.chat.is_friend("Pal"));
+    // Details of the selected entry: your own character first, then a friend.
+    pump(&mut app, 300);
+    let s = screen(&mut app, 120, 30);
+    assert!(s.contains("Your character · 1 friend"), "{s}");
+    key(&mut app, KeyCode::Down);
+    screen(&mut app, 120, 30);
+    pump_until(&mut app, "card", |a| matches!(a.char_cards.get("friendo"), Some(Some(_))) && a.mapping.is_some());
+    let s = screen(&mut app, 120, 30);
+    show(&s);
+    assert!(s.contains("♥ Friend of Tester") && s.contains("Gender") && s.contains("Female") && s.contains("Up for RP"), "{s}");
+    // Ctrl+F finds a row; removing the friend is for Alt Char.
+    key_mod(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
+    type_text(&mut app, "pal");
+    key(&mut app, KeyCode::Enter);
+    let s = screen(&mut app, 120, 30);
+    assert!(s.contains("find \"pal\"") && s.contains("Friend of Alt Char"), "{s}");
+    key(&mut app, KeyCode::Esc);
+    assert!(matches!(app.dialogs.last(), Some(super::dialogs::Dialog::Friends(_))), "Esc ends the search first");
+    key(&mut app, KeyCode::Enter);
+    match app.dialogs.last() {
+        Some(super::dialogs::Dialog::Menu { items, .. }) => {
+            assert!(
+                items.iter().any(|i| i.label == "Remove friend (of Alt Char)"),
+                "{:?}",
+                items.iter().map(|i| &i.label).collect::<Vec<_>>()
+            )
+        }
+        _ => panic!("no user menu"),
+    }
+    key(&mut app, KeyCode::Esc);
     key(&mut app, KeyCode::Tab);
     key(&mut app, KeyCode::Tab);
     assert!(screen(&mut app, 120, 30).contains("Stranger"));
@@ -520,6 +617,27 @@ fn end_to_end() {
     let recent = crate::logs::recent("Tester", 10);
     assert!(recent.iter().any(|r| r.1 == "Friendo" && r.2 == "private"), "{recent:?}");
     assert!(recent.iter().any(|r| r.0 == "Frontpage" && r.2 == "channel"), "{recent:?}");
+
+    // Help and settings open over other windows; F1/F6 close them again.
+    command(&mut app, "/channels");
+    key(&mut app, KeyCode::F(6));
+    assert!(matches!(app.dialogs.last(), Some(super::dialogs::Dialog::Settings(_))) && app.dialogs.len() == 2);
+    key(&mut app, KeyCode::F(1));
+    let s = screen(&mut app, 120, 30);
+    assert!(s.contains(&format!("F-Term v{} help", crate::protocol::CLIENT_VERSION)) && app.dialogs.len() == 3, "{s}");
+    // Ctrl+F in a text view scrolls to the match.
+    key_mod(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
+    type_text(&mut app, "/timeout");
+    key(&mut app, KeyCode::Enter);
+    let s = screen(&mut app, 120, 30);
+    assert!(s.contains("/timeout") && matches!(app.dialogs.last(), Some(super::dialogs::Dialog::Help { scroll }) if *scroll > 10), "{s}");
+    key(&mut app, KeyCode::F(1));
+    key(&mut app, KeyCode::F(6));
+    assert!(matches!(app.dialogs.last(), Some(super::dialogs::Dialog::Channels(_))));
+    key(&mut app, KeyCode::Esc);
+    assert!(app.dialogs.is_empty());
+    command(&mut app, "/version");
+    assert!(app.chat.active_conv().messages.back().unwrap().text.starts_with(&format!("F-Term v{}", crate::protocol::CLIENT_VERSION)));
 
     // Help and settings render.
     key(&mut app, KeyCode::F(1));
@@ -718,6 +836,110 @@ fn new_features(app: &mut App) {
     pump(app, 200);
     key(app, KeyCode::Esc);
     assert!(app.dialogs.is_empty());
+
+    browse_and_groups(app);
+}
+
+/// "Browse New", groups, Braille images and the compact layout.
+fn browse_and_groups(app: &mut App) {
+    let is = |a: &App, f: fn(&super::dialogs::Dialog) -> bool| a.dialogs.last().is_some_and(f);
+    // Browse New (Alt+U): the list, details of the selected character, paging.
+    key_mod(app, KeyCode::Char('u'), KeyModifiers::ALT);
+    pump_until(app, "browse", |a| is(a, |d| matches!(d, super::dialogs::Dialog::Browse(b) if b.data.is_some())));
+    let s = screen(app, 120, 30);
+    show(&s);
+    assert!(s.contains("New and updated characters · page 1") && s.contains("Sky Dancer") && s.contains("Plain Jane"), "{s}");
+    assert!(s.contains("Snow & Ice Fox") && s.contains("Species"), "{s}");
+    key(app, KeyCode::PageDown);
+    pump_until(app, "page 2", |a| is(a, |d| matches!(d, super::dialogs::Dialog::Browse(b) if b.data.is_some())));
+    assert!(screen(app, 120, 30).contains("page 2"));
+    assert!(site_log().contains("/character_browse.php?type=edited&offset=20"), "{}", site_log());
+    key(app, KeyCode::Tab);
+    pump_until(app, "newest", |a| is(a, |d| matches!(d, super::dialogs::Dialog::Browse(b) if b.data.is_some())));
+    assert!(screen(app, 120, 30).contains("Recently created characters · page 1"));
+    key(app, KeyCode::Enter);
+    assert!(matches!(app.dialogs.last(), Some(super::dialogs::Dialog::Menu { title, .. }) if title.starts_with("Sky Dancer")));
+    key(app, KeyCode::Esc);
+    key(app, KeyCode::Esc);
+
+    // Groups (Alt+G): your groups first, filter, open a group.
+    key_mod(app, KeyCode::Char('g'), KeyModifiers::ALT);
+    pump_until(app, "group list", |a| is(a, |d| matches!(d, super::dialogs::Dialog::Groups(g) if g.list.is_some())));
+    let s = screen(app, 120, 30);
+    show(&s);
+    let line = |s: &str, what: &str| s.lines().position(|l| l.contains(what)).unwrap_or_else(|| panic!("{what} missing: {s}"));
+    assert!(line(&s, "★ Night Owls") < line(&s, "Writers Guild  120 posts · 45 members"), "{s}");
+    type_text(app, "writ");
+    let s = screen(app, 120, 30);
+    assert!(s.contains("Groups · 1 of 2") && s.contains("owner Inkwell") && s.contains("For writers & readers."), "{s}");
+    key(app, KeyCode::Enter);
+    pump_until(app, "group", |a| is(a, |d| matches!(d, super::dialogs::Dialog::Groups(g) if matches!(g.group, Some(Some(_))))));
+    let s = screen(app, 120, 30);
+    show(&s);
+    assert!(
+        s.contains("Group: Writers Guild") && s.contains("Members: Alt Char") && s.contains("Story prompts  12 posts in 3 threads"),
+        "{s}"
+    );
+    // Join with the character that isn't a member yet.
+    type_text(app, "J");
+    assert!(screen(app, 120, 30).contains("Join Writers Guild as"));
+    key(app, KeyCode::Enter);
+    pump_until(app, "join", |_| site_log().contains("/json/joinGroup.json"));
+    assert!(site_log().contains("group_id=300&character_id=1"), "{}", site_log());
+    pump(app, 200);
+
+    // A forum, a thread, and a reply.
+    key(app, KeyCode::Enter);
+    pump_until(app, "forum", |a| is(a, |d| matches!(d, super::dialogs::Dialog::Groups(g) if matches!(g.forum, Some(Some(_))))));
+    let s = screen(app, 120, 30);
+    show(&s);
+    assert!(
+        s.contains("Writers Guild › Story prompts") && s.contains("Prompts for October by Inkwell") && s.contains("Rules [locked]"),
+        "{s}"
+    );
+    key(app, KeyCode::Enter);
+    pump_until(app, "thread", |a| is(a, |d| matches!(d, super::dialogs::Dialog::Groups(g) if matches!(g.thread, Some(Some(_))))));
+    let s = screen(app, 120, 30);
+    show(&s);
+    assert!(
+        s.contains("Prompts for October · page 1/2") && s.contains("A haunted lighthouse.") && s.contains("Second line & more."),
+        "{s}"
+    );
+    assert!(line(&s, "Inkwell · 1w ago") < line(&s, "Friendo · 2d ago"), "{s}");
+    key(app, KeyCode::Char(']'));
+    pump_until(app, "page 2", |_| site_log().contains("/thread.php?thread=900&offset=25"));
+    pump(app, 200);
+    type_text(app, "r");
+    type_text(app, "Count me in");
+    key_mod(app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    pump_until(app, "reply", |_| site_log().contains("/action/script_create_post.php"));
+    let log = site_log();
+    assert!(log.contains("group_id=300&thread_id=900&forum_id=55&character_id=1&message=Count+me+in&csrf_token=tok123"), "{log}");
+    pump_until(app, "reply posted", |a| a.flash.as_ref().is_some_and(|f| f.0 == "Reply posted."));
+    // Back up to the forum, the group and the list.
+    key(app, KeyCode::Esc);
+    key(app, KeyCode::Esc);
+    key(app, KeyCode::Esc);
+    assert!(screen(app, 120, 30).contains("Groups · 1 of 2"));
+    key(app, KeyCode::Esc);
+    key(app, KeyCode::Esc);
+    assert!(app.dialogs.is_empty());
+
+    // Braille images: 2x4 dots per character, brightness as the share of
+    // dots, in the picture's colour. Selectable like the other modes.
+    command(app, "/images braille");
+    assert_eq!(app.settings.image_mode, crate::config::ImageMode::Braille);
+    let px = crate::images::Pixels { width: 8, height: 8, rgba: [200u8, 50, 50, 255].repeat(64) };
+    let lines = crate::images::render_braille(&px, 10, 5, true);
+    let cells: Vec<&ratatui::text::Span> = lines.iter().flat_map(|l| l.spans.iter()).collect();
+    assert!(cells.iter().all(|s| s.content.chars().all(|c| ('\u{2800}'..='\u{28ff}').contains(&c) || c == ' ')), "{lines:?}");
+    assert!(cells.iter().any(|s| s.content != " " && s.style.fg == Some(ratatui::style::Color::Rgb(200, 50, 50))), "{lines:?}");
+    command(app, "/images blocks");
+
+    // Screens of 80 columns or less use the compact layout in every build.
+    let s = screen(app, 80, 25);
+    show(&s);
+    assert!(s.lines().next().unwrap().starts_with('1') || !s.contains("╭ Tabs"), "{s}");
 }
 
 /// The real app against the real F-Chat server and website, read-only:
@@ -799,6 +1021,39 @@ fn live_app() {
     let s = screen(&mut app, 120, 30);
     println!("{s}");
     assert!(s.contains("groups on F-List") || s.contains("Not in any groups"), "{s}");
+    key(&mut app, KeyCode::Esc);
+
+    // Browse New and a group's forum and thread (reading only).
+    key_mod(&mut app, KeyCode::Char('u'), KeyModifiers::ALT);
+    slow(&mut app, "browse", &|a| matches!(a.dialogs.last(), Some(super::dialogs::Dialog::Browse(b)) if b.data.is_some()));
+    pump(&mut app, 3000);
+    let s = screen(&mut app, 120, 30);
+    println!("{s}");
+    assert!(s.contains("New and updated characters · page 1"), "{s}");
+    key(&mut app, KeyCode::Esc);
+    command(&mut app, "/groups f-chat");
+    let loaded = |a: &App, lvl: usize| {
+        matches!(a.dialogs.last(), Some(super::dialogs::Dialog::Groups(g)) if g.level() == lvl && match lvl {
+            1 => matches!(g.group, Some(Some(_))),
+            2 => matches!(g.forum, Some(Some(_))),
+            _ => matches!(g.thread, Some(Some(_))),
+        })
+    };
+    slow(&mut app, "group", &|a| loaded(a, 1));
+    println!("{}", screen(&mut app, 120, 30));
+    key(&mut app, KeyCode::Enter);
+    slow(&mut app, "forum", &|a| loaded(a, 2));
+    println!("{}", screen(&mut app, 120, 30));
+    key(&mut app, KeyCode::Enter);
+    slow(&mut app, "thread", &|a| loaded(a, 3));
+    let s = screen(&mut app, 120, 30);
+    println!("{s}");
+    assert!(s.contains("page 1/"), "{s}");
+    key(&mut app, KeyCode::Esc);
+    key(&mut app, KeyCode::Esc);
+    key(&mut app, KeyCode::Esc);
+    slow(&mut app, "group list", &|a| matches!(a.dialogs.last(), Some(super::dialogs::Dialog::Groups(g)) if g.list.is_some()));
+    println!("{}", screen(&mut app, 120, 30));
     key(&mut app, KeyCode::Esc);
     app.disconnect();
     let _ = std::fs::remove_dir_all(&dir);
@@ -971,9 +1226,7 @@ fn screenshots() {
     type_text(&mut app, "Sounds great, I'm in!");
     shot(&mut app, "chat.png", 120, 34, true);
     shot(&mut app, "chat-blocks.png", 120, 34, false);
-    app.narrow_console = true;
     shot(&mut app, "console-80x25.png", 80, 25, false);
-    app.narrow_console = false;
     app.input.clear();
 
     // A profile with the kink match.
